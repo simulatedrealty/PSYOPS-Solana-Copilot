@@ -130,5 +130,47 @@
     },
     "memoTxid": "N/A",
     "status": "SUCCESS"
+  },
+  {
+    "id": "ed33f2fb",
+    "ts": 1770816100724,
+    "pair": "SOL-USDC",
+    "side": "BUY",
+    "mode": "paper",
+    "notional": 20,
+    "fillPrice": 81.03070834124074,
+    "confidence": 0.5,
+    "reasons": [
+      "Manual execution from dashboard"
+    ],
+    "riskChecks": {
+      "cooldownOK": true,
+      "maxNotionalOK": true,
+      "maxDailyLossOK": true,
+      "slippageOK": true
+    },
+    "memoTxid": "N/A",
+    "status": "SUCCESS"
+  },
+  {
+    "id": "6f491dc1",
+    "ts": 1770816315699,
+    "pair": "SOL-USDC",
+    "side": "BUY",
+    "mode": "paper",
+    "notional": 20,
+    "fillPrice": 80.85119197032532,
+    "confidence": 0.5,
+    "reasons": [
+      "Manual execution from dashboard"
+    ],
+    "riskChecks": {
+      "cooldownOK": true,
+      "maxNotionalOK": true,
+      "maxDailyLossOK": true,
+      "slippageOK": true
+    },
+    "memoTxid": "N/A",
+    "status": "SUCCESS"
   }
 ]

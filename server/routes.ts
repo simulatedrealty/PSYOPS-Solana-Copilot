@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { sharedState } from "./engine/state";
+import { sharedState, getPubkey, getConnection } from "./engine/state";
+import { initAgentKit } from "./engine/agentKit";
 import { getConfig } from "./engine/config";
 import { getMarket, getSignal, executeTrade, getReceipts, getReceiptById } from "./engine/tradingEngine";
 import { updateRollingPrices } from "./engine/signal";
@@ -12,11 +13,24 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  app.get("/api/ui/state", (_req, res) => {
+  let cachedBalance: number | null = null;
+  let lastBalanceCheck = 0;
+
+  app.get("/api/ui/state", async (_req, res) => {
     const receipts = getReceipts();
+    const now = Date.now();
+    if (now - lastBalanceCheck > 30000) {
+      try {
+        const balance = await getConnection().getBalance(initAgentKit().wallet_address);
+        cachedBalance = balance / 1e9;
+        lastBalanceCheck = now;
+      } catch {}
+    }
     res.json({
       running: sharedState.running,
       paperMode: sharedState.paperMode,
+      walletAddress: getPubkey(),
+      walletBalance: cachedBalance,
       pair: getConfig().pair,
       impliedPrice: sharedState.lastImpliedPrice,
       rollingHigh: sharedState.rollingPrices.length > 0 ? Math.max(...sharedState.rollingPrices) : null,

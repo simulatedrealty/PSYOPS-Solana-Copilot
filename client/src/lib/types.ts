@@ -23,6 +23,8 @@ export interface Receipt {
 export interface TradingState {
   running: boolean;
   paperMode: boolean;
+  walletAddress: string;
+  walletBalance: number | null;
   pair: string;
   impliedPrice: number | null;
   rollingHigh: number | null;

@@ -178,7 +178,28 @@ export default function Dashboard() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight">PSYOPS - Solana Trading Copilot</h1>
-            <p className="text-xs text-muted-foreground">{state.paperMode ? "Paper Mode" : "Live Mode"} &middot; Devnet &middot; {state.pair}</p>
+            <p className="text-xs text-muted-foreground">
+              {state.paperMode ? "Paper Mode" : "Live Mode"} &middot; Devnet &middot; {state.pair}
+              {state.walletAddress && (
+                <>
+                  {" "}&middot;{" "}
+                  <a
+                    href={`https://explorer.solana.com/address/${state.walletAddress}?cluster=devnet`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline font-mono"
+                    data-testid="link-wallet-explorer"
+                  >
+                    {state.walletAddress.slice(0, 4)}...{state.walletAddress.slice(-4)}
+                  </a>
+                  {state.walletBalance !== null && state.walletBalance !== undefined && (
+                    <span className="text-muted-foreground" data-testid="text-wallet-balance">
+                      {" "}({state.walletBalance.toFixed(4)} SOL)
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -386,7 +407,7 @@ export default function Dashboard() {
                         <span className="font-mono text-muted-foreground">
                           {Math.round(r.confidence * 100)}%
                         </span>
-                        {r.memoTxid && r.memoTxid !== "N/A" && (
+                        {r.memoTxid && r.memoTxid !== "N/A" ? (
                           <a
                             href={`https://explorer.solana.com/tx/${r.memoTxid}?cluster=devnet`}
                             target="_blank"
@@ -396,6 +417,10 @@ export default function Dashboard() {
                           >
                             <ExternalLink className="w-3 h-3" />
                           </a>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground border-muted-foreground/20">
+                            off-chain
+                          </Badge>
                         )}
                       </div>
                     </div>
