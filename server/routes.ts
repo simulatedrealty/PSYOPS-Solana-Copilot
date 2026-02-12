@@ -115,6 +115,63 @@ export async function registerRoutes(
     res.json(getReceipts());
   });
 
+  app.get(["/skill.md", "/api/skill.md"], (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
+    const md = `# PSYOPS — Solana Trading Copilot Skill
+
+PSYOPS is an LLM-driven autonomous trading copilot for Solana.
+It runs in paper mode but commits on-chain memo receipts on Solana devnet.
+
+## Base URL
+
+${baseUrl}
+
+## Invoke Endpoint
+
+POST ${baseUrl}/api/skill/invoke
+
+Body:
+
+\`\`\`json
+{
+  "action": "get_market | get_signal | propose_trade | execute_trade | get_receipt",
+  "args": {}
+}
+\`\`\`
+
+### Actions
+
+| Action | Args | Description |
+|--------|------|-------------|
+| get_market | { "pair": "SOL-USDC" } | Get current implied price and slippage from Jupiter |
+| get_signal | { "pair": "SOL-USDC" } | Get breakout signal (BUY/SELL/HOLD) with strength |
+| propose_trade | { "pair": "SOL-USDC", "side": "BUY", "notional": 20 } | Run risk checks and get trade explanation |
+| execute_trade | { "pair": "SOL-USDC", "side": "BUY", "notional": 20, "confidence": 0.8 } | Execute paper trade and write on-chain memo |
+| get_receipt | { "id": "<receipt_id>" } | Retrieve a specific trade receipt |
+
+### Example
+
+\`\`\`bash
+curl -s ${baseUrl}/api/skill/invoke \\
+  -H "Content-Type: application/json" \\
+  -d '{"action":"get_signal","args":{"pair":"SOL-USDC"}}'
+\`\`\`
+
+## Manifest
+
+GET ${baseUrl}/api/skill/manifest
+
+## On-chain Receipts
+
+Each executed trade writes a Solana devnet memo transaction
+containing trade details and receipt ID for audit.
+`;
+
+    res.setHeader("Content-Type", "text/markdown");
+    res.send(md);
+  });
+
   app.get("/api/skill/manifest", (_req, res) => {
     res.json(manifest());
   });
