@@ -19,6 +19,7 @@ export async function registerRoutes(
   app.get("/api/ui/state", async (_req, res) => {
     const receipts = getReceipts();
     const now = Date.now();
+
     if (now - lastBalanceCheck > 30000) {
       try {
         const balance = await getConnection().getBalance(initAgentKit().wallet_address);
@@ -26,6 +27,7 @@ export async function registerRoutes(
         lastBalanceCheck = now;
       } catch {}
     }
+
     res.json({
       running: sharedState.running,
       paperMode: sharedState.paperMode,

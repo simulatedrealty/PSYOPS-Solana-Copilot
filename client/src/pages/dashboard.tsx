@@ -27,6 +27,7 @@ import {
   Brain,
   Receipt,
   FileText,
+  Wallet,
 } from "lucide-react";
 
 function SignalBadge({ signal }: { signal: string | null }) {
@@ -196,6 +197,21 @@ export default function Dashboard() {
                     <span className="text-muted-foreground" data-testid="text-wallet-balance">
                       {" "}({state.walletBalance.toFixed(4)} SOL)
                     </span>
+                  )}
+                  {state.walletBalance === 0 && (
+                    <>
+                      {" "}&middot;{" "}
+                      <a
+                        href={`https://faucet.solana.com/?address=${state.walletAddress}&network=devnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline inline-flex items-center gap-1"
+                        data-testid="link-fund-wallet"
+                      >
+                        <Wallet className="w-3 h-3" />
+                        Fund Wallet
+                      </a>
+                    </>
                   )}
                 </>
               )}
