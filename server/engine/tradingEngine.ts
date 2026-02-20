@@ -1,6 +1,4 @@
 import { randomUUID } from "crypto";
-import { readFileSync, writeFileSync, existsSync } from "fs";
-import { join } from "path";
 import { getImpliedPrice, type MarketData } from "./market";
 import { computeSignal, updateRollingPrices, type SignalResult } from "./signal";
 import { checkRisk, type RiskResult } from "./risk";
@@ -8,7 +6,7 @@ import { buildExplanation } from "./explain";
 import { sharedState } from "./state";
 import { getConfig } from "./config";
 import { getEngine } from "../execution/getEngine";
-import { appendReceipt } from "../receipts/store";
+import { appendReceipt, listReceipts } from "../receipts/store";
 
 export interface Receipt {
   id: string;
@@ -30,27 +28,12 @@ export interface Receipt {
   status: "SUCCESS" | "FAILED";
 }
 
-const RECEIPTS_PATH = join(process.cwd(), "receipts.json");
-
-function loadReceipts(): Receipt[] {
-  try {
-    if (existsSync(RECEIPTS_PATH)) {
-      return JSON.parse(readFileSync(RECEIPTS_PATH, "utf-8"));
-    }
-  } catch {}
-  return [];
-}
-
-function saveReceipts(receipts: Receipt[]): void {
-  writeFileSync(RECEIPTS_PATH, JSON.stringify(receipts, null, 2));
-}
-
 export function getReceipts(): Receipt[] {
-  return loadReceipts();
+  return listReceipts(500) as unknown as Receipt[];
 }
 
 export function getReceiptById(id: string): Receipt | undefined {
-  return loadReceipts().find((r) => r.id === id);
+  return (listReceipts(500) as unknown as Receipt[]).find((r) => r.id === id);
 }
 
 export async function getMarket(pair: string): Promise<MarketData> {
@@ -146,10 +129,7 @@ export async function executeTrade(
     status: execResult.ok ? "SUCCESS" : "FAILED",
   };
 
-  const receipts = loadReceipts();
-  receipts.push(receipt);
-  saveReceipts(receipts);
-  appendReceipt(receipt as unknown as Record<string, unknown>);
+  appendReceipt(receipt);
 
   return receipt;
 }

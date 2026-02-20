@@ -10,7 +10,7 @@ function ensureDataDir(): void {
   }
 }
 
-export function appendReceipt(receipt: Record<string, unknown>): void {
+export function appendReceipt(receipt: unknown): void {
   ensureDataDir();
   appendFileSync(JSONL_PATH, JSON.stringify(receipt) + "\n", "utf-8");
 }
