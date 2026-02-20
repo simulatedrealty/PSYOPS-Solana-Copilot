@@ -9,22 +9,13 @@ import { base } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { type ExecutionEngine, type ExecuteArgs, type ExecutionReceipt } from "./types";
 
-// ── Token addresses on Base mainnet ──────────────────────────────────────────
-const WETH = "0x4200000000000000000000000000000000000006" as const;
-const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const USDC_WETH_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224" as const; // 0.05% fee
-const SWAP_ROUTER_02 = "0x2626664c2603336E57B271c5C0b26F421741e481" as const;
+const USDC_DECIMALS = 6;
+const PRIMARY_TOKEN_DECIMALS = 18; // standard ERC-20; update if token uses different decimals
+
+// QuoterV2 is the same address on Base mainnet
 const QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9" as const;
 
-const USDC_DECIMALS = 6;
-const WETH_DECIMALS = 18;
-const POOL_FEE = 500; // 0.05%
-
-// Precomputed BigInt constants (avoids ** operator which needs tsconfig target ES2016+)
-const TEN_TO_12 = BigInt("1000000000000");
-const TWO_TO_192 = BigInt("6277101735386680763835789423207666416102355444464034512896");
-
-// ── ABIs (minimal) ───────────────────────────────────────────────────────────
+// ── ABIs (minimal) ────────────────────────────────────────────────────────────
 const ERC20_ABI = [
   {
     inputs: [
@@ -38,7 +29,8 @@ const ERC20_ABI = [
   },
 ] as const;
 
-const SWAP_ROUTER_ABI = [
+// Original Uniswap V3 SwapRouter — requires `deadline` in the params struct
+const SWAP_ROUTER_V3_ABI = [
   {
     inputs: [
       {
@@ -47,6 +39,7 @@ const SWAP_ROUTER_ABI = [
           { name: "tokenOut", type: "address" },
           { name: "fee", type: "uint24" },
           { name: "recipient", type: "address" },
+          { name: "deadline", type: "uint256" },
           { name: "amountIn", type: "uint256" },
           { name: "amountOutMinimum", type: "uint256" },
           { name: "sqrtPriceLimitX96", type: "uint160" },
@@ -87,22 +80,28 @@ const QUOTER_V2_ABI = [
     stateMutability: "nonpayable",
     type: "function",
   },
-] as const;
-
-const POOL_ABI = [
   {
-    inputs: [],
-    name: "slot0",
-    outputs: [
-      { name: "sqrtPriceX96", type: "uint160" },
-      { name: "tick", type: "int24" },
-      { name: "observationIndex", type: "uint16" },
-      { name: "observationCardinality", type: "uint16" },
-      { name: "observationCardinalityNext", type: "uint16" },
-      { name: "feeProtocol", type: "uint8" },
-      { name: "unlocked", type: "bool" },
+    inputs: [
+      {
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "fee", type: "uint24" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+        name: "params",
+        type: "tuple",
+      },
     ],
-    stateMutability: "view",
+    name: "quoteExactOutputSingle",
+    outputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "gasEstimate", type: "uint256" },
+    ],
+    stateMutability: "nonpayable",
     type: "function",
   },
 ] as const;
@@ -115,6 +114,15 @@ function getAccount() {
   return privateKeyToAccount(key);
 }
 
+function getEnvConfig() {
+  const primaryToken = process.env.BASE_PRIMARY_TOKEN as `0x${string}`;
+  if (!primaryToken) throw new Error("BASE_PRIMARY_TOKEN not set");
+  const usdc = (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as `0x${string}`;
+  const swapRouter = (process.env.BASE_SWAP_ROUTER || "0xE592427A0AEce92De3Edee1F18E0157C05861564") as `0x${string}`;
+  const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000");
+  return { primaryToken, usdc, swapRouter, poolFee };
+}
+
 // ── Engine ────────────────────────────────────────────────────────────────────
 export const baseEngine: ExecutionEngine = {
   getWallet(): string {
@@ -123,26 +131,22 @@ export const baseEngine: ExecutionEngine = {
 
   async executeTrade(args: ExecuteArgs): Promise<ExecutionReceipt> {
     const { pair, side, notionalUsd, maxSlippagePct = 0.5, reasons, mode } = args;
-    const explorerPrefix =
-      process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
+    const explorerPrefix = process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
     const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    const { primaryToken, usdc, swapRouter, poolFee } = getEnvConfig();
 
     const isBuy = side === "BUY";
-    const tokenIn = isBuy ? USDC : WETH;
-    const tokenOut = isBuy ? WETH : USDC;
-    const inTokenLabel = isBuy ? "USDC" : "WETH";
-    const outTokenLabel = isBuy ? "WETH" : "USDC";
+    const tokenIn  = isBuy ? usdc : primaryToken;
+    const tokenOut = isBuy ? primaryToken : usdc;
+    const inTokenLabel  = isBuy ? "USDC" : "PRIMARY";
+    const outTokenLabel = isBuy ? "PRIMARY" : "USDC";
 
     try {
       const account = getAccount();
       const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
-      const walletClient = createWalletClient({
-        account,
-        chain: base,
-        transport: http(rpcUrl),
-      });
+      const walletClient = createWalletClient({ account, chain: base, transport: http(rpcUrl) });
 
-      // Compute inAmount
+      // ── Compute inAmount ───────────────────────────────────────────────────
       let inAmountHuman: number;
       let inAmountRaw: bigint;
 
@@ -150,42 +154,36 @@ export const baseEngine: ExecutionEngine = {
         inAmountHuman = notionalUsd;
         inAmountRaw = parseUnits(notionalUsd.toFixed(USDC_DECIMALS), USDC_DECIMALS);
       } else {
-        // SELL: convert notionalUsd → WETH using current ETH price from pool slot0
-        const slot0 = await publicClient.readContract({
-          address: USDC_WETH_POOL,
-          abi: POOL_ABI,
-          functionName: "slot0",
-        });
-        const sqrtPriceX96 = slot0[0] as bigint;
-        const SCALE = BigInt(10000);
-        const num = TEN_TO_12 * TWO_TO_192 * SCALE;
-        const den = sqrtPriceX96 * sqrtPriceX96;
-        const ethPrice = Number(num / den) / 10000;
-        if (ethPrice <= 0) throw new Error("Could not determine ETH price from pool");
-        inAmountHuman = notionalUsd / ethPrice;
-        inAmountRaw = parseUnits(inAmountHuman.toFixed(8), WETH_DECIMALS);
+        // SELL: quote how many primary tokens yield `notionalUsd` USDC out
+        const usdcAmountRaw = parseUnits(notionalUsd.toFixed(USDC_DECIMALS), USDC_DECIMALS);
+        let estimatedIn = BigInt(0);
+        try {
+          const { result } = await publicClient.simulateContract({
+            address: QUOTER_V2,
+            abi: QUOTER_V2_ABI,
+            functionName: "quoteExactOutputSingle",
+            args: [{ tokenIn: primaryToken, tokenOut: usdc, amount: usdcAmountRaw, fee: poolFee, sqrtPriceLimitX96: BigInt(0) }],
+          });
+          estimatedIn = result[0] as bigint;
+        } catch {
+          throw new Error("Could not quote SELL amount from QuoterV2 — check pool liquidity");
+        }
+        inAmountRaw  = estimatedIn;
+        inAmountHuman = parseFloat(formatUnits(estimatedIn, PRIMARY_TOKEN_DECIMALS));
       }
 
-      // Quote expected output via QuoterV2 (off-chain simulation)
+      // ── Quote expected output (for slippage floor) ─────────────────────────
       let quotedOut = BigInt(0);
       try {
         const { result } = await publicClient.simulateContract({
           address: QUOTER_V2,
           abi: QUOTER_V2_ABI,
           functionName: "quoteExactInputSingle",
-          args: [
-            {
-              tokenIn,
-              tokenOut,
-              amountIn: inAmountRaw,
-              fee: POOL_FEE,
-              sqrtPriceLimitX96: BigInt(0),
-            },
-          ],
+          args: [{ tokenIn, tokenOut, amountIn: inAmountRaw, fee: poolFee, sqrtPriceLimitX96: BigInt(0) }],
         });
         quotedOut = result[0] as bigint;
       } catch {
-        // quoter may fail; proceed with amountOutMinimum = 0
+        // proceed with amountOutMinimum = 0
       }
 
       const slippageFactor = 1 - maxSlippagePct / 100;
@@ -194,26 +192,29 @@ export const baseEngine: ExecutionEngine = {
           ? BigInt(Math.floor(Number(quotedOut) * slippageFactor))
           : BigInt(0);
 
-      // Approve router to spend tokenIn
+      // ── Approve router ─────────────────────────────────────────────────────
       const approveTx = await walletClient.writeContract({
         address: tokenIn,
         abi: ERC20_ABI,
         functionName: "approve",
-        args: [SWAP_ROUTER_02, inAmountRaw],
+        args: [swapRouter, inAmountRaw],
       });
       await publicClient.waitForTransactionReceipt({ hash: approveTx });
 
-      // Execute swap via SwapRouter02 exactInputSingle
+      // ── Swap via original V3 SwapRouter (deadline required) ────────────────
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 300); // 5 min
+
       const swapTx = await walletClient.writeContract({
-        address: SWAP_ROUTER_02,
-        abi: SWAP_ROUTER_ABI,
+        address: swapRouter,
+        abi: SWAP_ROUTER_V3_ABI,
         functionName: "exactInputSingle",
         args: [
           {
             tokenIn,
             tokenOut,
-            fee: POOL_FEE,
+            fee: poolFee,
             recipient: account.address,
+            deadline,
             amountIn: inAmountRaw,
             amountOutMinimum,
             sqrtPriceLimitX96: BigInt(0),
@@ -222,11 +223,9 @@ export const baseEngine: ExecutionEngine = {
       });
       const receipt = await publicClient.waitForTransactionReceipt({ hash: swapTx });
 
-      const outDecimals = isBuy ? WETH_DECIMALS : USDC_DECIMALS;
+      const outDecimals = isBuy ? PRIMARY_TOKEN_DECIMALS : USDC_DECIMALS;
       const outAmountHuman =
-        quotedOut > BigInt(0)
-          ? parseFloat(formatUnits(quotedOut, outDecimals))
-          : 0;
+        quotedOut > BigInt(0) ? parseFloat(formatUnits(quotedOut, outDecimals)) : 0;
 
       return {
         ok: receipt.status === "success",
