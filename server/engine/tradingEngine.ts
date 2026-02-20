@@ -8,6 +8,7 @@ import { buildExplanation } from "./explain";
 import { sharedState } from "./state";
 import { getConfig } from "./config";
 import { getEngine } from "../execution/getEngine";
+import { appendReceipt } from "../receipts/store";
 
 export interface Receipt {
   id: string;
@@ -114,6 +115,8 @@ export async function executeTrade(
   const currentValue = sharedState.paperPosition * fillPrice + sharedState.paperUSDC;
   sharedState.paperPnL = currentValue - 1000;
   sharedState.lastTradeTs = Date.now();
+  sharedState.lastTxHash = execResult.txHash || null;
+  sharedState.lastExplorerUrl = execResult.explorerUrl || null;
 
   if (sharedState.paperPnL < 0) {
     sharedState.dailyLoss = Math.abs(sharedState.paperPnL);
@@ -146,6 +149,7 @@ export async function executeTrade(
   const receipts = loadReceipts();
   receipts.push(receipt);
   saveReceipts(receipts);
+  appendReceipt(receipt as unknown as Record<string, unknown>);
 
   return receipt;
 }

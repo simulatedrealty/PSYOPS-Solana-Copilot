@@ -43,6 +43,8 @@ export interface SharedState {
     maxDailyLossOK: boolean;
     slippageOK: boolean;
   };
+  lastTxHash: string | null;
+  lastExplorerUrl: string | null;
 }
 
 export const sharedState: SharedState = {
@@ -68,4 +70,6 @@ export const sharedState: SharedState = {
     maxDailyLossOK: true,
     slippageOK: true,
   },
+  lastTxHash: null,
+  lastExplorerUrl: null,
 };

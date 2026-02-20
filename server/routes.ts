@@ -8,6 +8,7 @@ import { updateRollingPrices } from "./engine/signal";
 import { checkRisk } from "./engine/risk";
 import { startLoop, stopLoop } from "./engine/loop";
 import { manifest, invoke } from "./skills/tradingSkill";
+import { listReceipts } from "./receipts/store";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -49,6 +50,9 @@ export async function registerRoutes(
       lastAction: sharedState.tradeHistory.length > 0
         ? sharedState.tradeHistory[sharedState.tradeHistory.length - 1]
         : null,
+      lastTxHash: sharedState.lastTxHash,
+      lastExplorerUrl: sharedState.lastExplorerUrl,
+      totalTrades: receipts.length,
       receipts,
     });
   });
@@ -111,8 +115,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/ui/receipts", (_req, res) => {
-    res.json(getReceipts());
+  app.get("/api/ui/receipts", (req, res) => {
+    const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 500);
+    res.json(listReceipts(limit));
   });
 
   app.get(["/skill.md", "/api/skill.md"], (req, res) => {
