@@ -1,20 +1,19 @@
 import { randomUUID } from "crypto";
-import { readFileSync, writeFileSync, existsSync } from "fs";
-import { join } from "path";
 import { getImpliedPrice, type MarketData } from "./market";
 import { computeSignal, updateRollingPrices, type SignalResult } from "./signal";
 import { checkRisk, type RiskResult } from "./risk";
 import { buildExplanation } from "./explain";
-import { agentSendMemo } from "./agentKit";
 import { sharedState } from "./state";
 import { getConfig } from "./config";
+import { getEngine } from "../execution/getEngine";
+import { appendReceipt, listReceipts } from "../receipts/store";
 
 export interface Receipt {
   id: string;
   ts: number;
   pair: string;
   side: "BUY" | "SELL";
-  mode: "paper";
+  mode: "paper" | "live";
   notional: number;
   fillPrice: number;
   confidence: number;
@@ -29,27 +28,12 @@ export interface Receipt {
   status: "SUCCESS" | "FAILED";
 }
 
-const RECEIPTS_PATH = join(process.cwd(), "receipts.json");
-
-function loadReceipts(): Receipt[] {
-  try {
-    if (existsSync(RECEIPTS_PATH)) {
-      return JSON.parse(readFileSync(RECEIPTS_PATH, "utf-8"));
-    }
-  } catch {}
-  return [];
-}
-
-function saveReceipts(receipts: Receipt[]): void {
-  writeFileSync(RECEIPTS_PATH, JSON.stringify(receipts, null, 2));
-}
-
 export function getReceipts(): Receipt[] {
-  return loadReceipts();
+  return listReceipts(500) as unknown as Receipt[];
 }
 
 export function getReceiptById(id: string): Receipt | undefined {
-  return loadReceipts().find((r) => r.id === id);
+  return (listReceipts(500) as unknown as Receipt[]).find((r) => r.id === id);
 }
 
 export async function getMarket(pair: string): Promise<MarketData> {
@@ -83,26 +67,39 @@ export async function executeTrade(
   reasons: string[],
   tag?: string
 ): Promise<Receipt> {
-  const market = await getMarket(pair);
+  const engine = getEngine();
   const cfg = getConfig();
-  const risk = checkRisk(notional, market.slippageBps, cfg);
 
-  const fillPrice = market.impliedPrice;
+  const execResult = await engine.executeTrade({
+    pair,
+    side,
+    notionalUsd: notional,
+    maxSlippagePct: cfg.maxSlippageBps / 100,
+    reasons,
+    mode: tag || "auto",
+  });
+
+  // fillPrice: expressed as quote-token per base-token (e.g. USDC per SOL/ETH)
+  const usdcAmount = side === "BUY" ? execResult.inAmount : execResult.outAmount;
+  const tokenAmount = side === "BUY" ? execResult.outAmount : execResult.inAmount;
+  const fillPrice = tokenAmount > 0 ? usdcAmount / tokenAmount : 0;
+
   const receiptId = randomUUID().slice(0, 8);
 
+  // Update paper portfolio state
   if (side === "BUY") {
-    const solAmount = notional / fillPrice;
     sharedState.paperUSDC -= notional;
-    sharedState.paperPosition += solAmount;
+    sharedState.paperPosition += tokenAmount;
   } else {
-    const solAmount = notional / fillPrice;
-    sharedState.paperPosition -= solAmount;
+    sharedState.paperPosition -= tokenAmount;
     sharedState.paperUSDC += notional;
   }
 
   const currentValue = sharedState.paperPosition * fillPrice + sharedState.paperUSDC;
   sharedState.paperPnL = currentValue - 1000;
   sharedState.lastTradeTs = Date.now();
+  sharedState.lastTxHash = execResult.txHash || null;
+  sharedState.lastExplorerUrl = execResult.explorerUrl || null;
 
   if (sharedState.paperPnL < 0) {
     sharedState.dailyLoss = Math.abs(sharedState.paperPnL);
@@ -114,27 +111,25 @@ export async function executeTrade(
     price: fillPrice,
   });
 
-  const memoText = `AA|${pair}|${side}|N=${notional}|conf=${confidence.toFixed(2)}|id=${receiptId}`;
-  const memoTxid = await agentSendMemo(memoText);
+  // Risk check for receipt recording (slippage from engine result)
+  const risk = checkRisk(notional, execResult.slippageBps ?? 0, cfg);
 
   const receipt: Receipt = {
     id: receiptId,
-    ts: Date.now(),
+    ts: execResult.ts,
     pair,
     side,
-    mode: "paper",
+    mode: sharedState.paperMode ? "paper" : "live",
     notional,
     fillPrice,
     confidence,
     reasons,
     riskChecks: risk.checks,
-    memoTxid,
-    status: "SUCCESS",
+    memoTxid: execResult.txHash || "N/A",
+    status: execResult.ok ? "SUCCESS" : "FAILED",
   };
 
-  const receipts = loadReceipts();
-  receipts.push(receipt);
-  saveReceipts(receipts);
+  appendReceipt(receipt);
 
   return receipt;
 }

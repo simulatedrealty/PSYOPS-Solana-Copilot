@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "id": "a6990054",
+    "ts": 1771603078409,
+    "pair": "SOL-USDC",
+    "side": "BUY",
+    "mode": "paper",
+    "notional": 20,
+    "fillPrice": 0,
+    "confidence": 0.5,
+    "reasons": [
+      "Manual execution from dashboard"
+    ],
+    "riskChecks": {
+      "cooldownOK": false,
+      "maxNotionalOK": true,
+      "maxDailyLossOK": true,
+      "slippageOK": true
+    },
+    "memoTxid": "N/A",
+    "status": "SUCCESS"
+  }
+]
