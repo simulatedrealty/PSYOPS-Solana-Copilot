@@ -13,7 +13,7 @@ export interface Receipt {
   ts: number;
   pair: string;
   side: "BUY" | "SELL";
-  mode: "paper";
+  mode: "paper" | "live";
   notional: number;
   fillPrice: number;
   confidence: number;
@@ -119,7 +119,7 @@ export async function executeTrade(
     ts: execResult.ts,
     pair,
     side,
-    mode: "paper",
+    mode: sharedState.paperMode ? "paper" : "live",
     notional,
     fillPrice,
     confidence,

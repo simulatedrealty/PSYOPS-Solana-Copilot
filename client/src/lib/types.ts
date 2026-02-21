@@ -10,7 +10,7 @@ export interface Receipt {
   ts: number;
   pair: string;
   side: "BUY" | "SELL";
-  mode: "paper";
+  mode: "paper" | "live";
   notional: number;
   fillPrice: number;
   confidence: number;
