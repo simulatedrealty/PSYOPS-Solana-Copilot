@@ -118,7 +118,7 @@ export async function registerRoutes(
       // Base — caller provides explicit ERC20 addresses for any token, or fall back to env vars
       sharedState.activeTokens = {
         base:  baseToken  || process.env.BASE_PRIMARY_TOKEN || "",
-        quote: quoteToken || process.env.BASE_USDC          || "",
+        quote: quoteToken || process.env.BASE_USDC          || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       };
       sharedState.activePair = pair || "BASE-USDC";
     }
@@ -237,8 +237,7 @@ export async function registerRoutes(
           return res.status(400).json({ error: "Transaction failed on-chain", details: tx.meta.err });
         }
       } else if (chain === "base") {
-        const rpcUrl = process.env.BASE_RPC_URL;
-        if (!rpcUrl) return res.status(400).json({ error: "Base chain not configured" });
+        const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
         const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
         const txReceipt = await publicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
         if (!txReceipt) {

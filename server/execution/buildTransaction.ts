@@ -199,14 +199,14 @@ export async function buildBaseTransaction(
   notional: number,
   walletAddress: string
 ): Promise<{ steps: TransactionStep[] }> {
-  const rpcUrl = process.env.BASE_RPC_URL;
+  const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
   const primaryToken = process.env.BASE_PRIMARY_TOKEN as Address;
-  const usdcAddress = process.env.BASE_USDC as Address;
-  const swapRouter = process.env.BASE_SWAP_ROUTER as Address;
+  const usdcAddress = (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
+  const swapRouter = (process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
   const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
 
-  if (!rpcUrl || !primaryToken || !usdcAddress || !swapRouter) {
-    throw new Error("Base chain not configured. Required: BASE_RPC_URL, BASE_PRIMARY_TOKEN, BASE_USDC, BASE_SWAP_ROUTER");
+  if (!primaryToken) {
+    throw new Error("Base chain not configured. Required: BASE_PRIMARY_TOKEN");
   }
 
   const isBuy = side === "BUY";

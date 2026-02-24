@@ -180,9 +180,9 @@ export const baseEngine: ExecutionEngine = {
     }
 
     // ── Strict env config (no silent fallbacks) ───────────────────────────────
-    const rpcUrl = requireEnv("BASE_RPC_URL");
+    const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
     const pk = requireEnv("BASE_PRIVATE_KEY");
-    const swapRouter = requireEnv("BASE_SWAP_ROUTER") as Address;
+    const swapRouter = (process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
     const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
     const explorerPrefix =
       process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
@@ -199,7 +199,7 @@ export const baseEngine: ExecutionEngine = {
       tokenOut = args.tokenOut as Address;
     } else {
       const primaryToken = requireEnv("BASE_PRIMARY_TOKEN") as Address;
-      const usdcAddress  = requireEnv("BASE_USDC") as Address;
+      const usdcAddress  = (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
       tokenIn  = isBuy ? usdcAddress  : primaryToken;
       tokenOut = isBuy ? primaryToken : usdcAddress;
     }
