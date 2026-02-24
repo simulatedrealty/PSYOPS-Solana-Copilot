@@ -63,7 +63,7 @@ function resolveChainContext(args: Record<string, any>) {
 
   const tokens = {
     base:  args.baseToken  || (chain === "solana-devnet" ? sharedState.activeTokens.base  : (process.env.BASE_PRIMARY_TOKEN || "")),
-    quote: args.quoteToken || (chain === "solana-devnet" ? sharedState.activeTokens.quote : (process.env.BASE_USDC          || "")),
+    quote: args.quoteToken || (chain === "solana-devnet" ? sharedState.activeTokens.quote : (process.env.BASE_USDC          || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")),
   };
 
   // Fall back to Solana defaults if still empty
@@ -138,7 +138,7 @@ export async function invoke(action: string, args: Record<string, any>): Promise
       } else {
         sharedState.activeTokens = {
           base:  args.baseToken  || process.env.BASE_PRIMARY_TOKEN || "",
-          quote: args.quoteToken || process.env.BASE_USDC          || "",
+          quote: args.quoteToken || process.env.BASE_USDC          || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         };
         sharedState.activePair = args.pair || "BASE-USDC";
       }
@@ -154,9 +154,7 @@ export async function invoke(action: string, args: Record<string, any>): Promise
       const wallet = getEngine(chain).getWallet();
       const configured =
         chain === "solana-devnet" ||
-        !!(process.env.BASE_PRIVATE_KEY && process.env.BASE_RPC_URL &&
-           process.env.BASE_PRIMARY_TOKEN && process.env.BASE_USDC &&
-           process.env.BASE_SWAP_ROUTER);
+        !!(process.env.BASE_PRIVATE_KEY && process.env.BASE_PRIMARY_TOKEN);
 
       return {
         chain: sharedState.activeChain,

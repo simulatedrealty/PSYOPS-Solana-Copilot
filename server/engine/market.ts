@@ -10,6 +10,11 @@ const MINT_MAP: Record<string, string> = {
   USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 };
 
+// ── Base defaults (public, non-secret) ───────────────────────────────────────
+const BASE_USDC_DEFAULT        = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_SWAP_ROUTER_DEFAULT = "0x2626664c2603336E57B271c5C0b26F421741e481";
+const BASE_RPC_DEFAULT         = "https://mainnet.base.org";
+
 export interface MarketData {
   impliedPrice: number;
   slippageBps: number;
@@ -129,18 +134,19 @@ async function getBaseImpliedPrice(
   tokens: ActiveTokens,
   notional: number
 ): Promise<MarketData> {
-  const rpcUrl = process.env.BASE_RPC_URL;
-  if (!rpcUrl) {
-    console.warn("[market] BASE_RPC_URL not set — Base market data unavailable");
-    return { impliedPrice: 0, slippageBps: 0, impact: 0, routeSummary: "BASE_RPC_URL not set" };
-  }
+  const rpcUrl = process.env.BASE_RPC_URL || BASE_RPC_DEFAULT;
 
   try {
     const publicClient = createPublicClient({ chain: baseChain, transport: http(rpcUrl) });
     const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
 
-    const quoteAddr = tokens.quote as Address;
-    const baseAddr  = tokens.base  as Address;
+    const quoteAddr = (tokens.quote || BASE_USDC_DEFAULT) as Address;
+    const baseAddr  = tokens.base as Address;
+
+    if (!baseAddr) {
+      console.warn("[market] No base token address provided for Base chain");
+      return { impliedPrice: 0, slippageBps: 0, impact: 0, routeSummary: "no base token address" };
+    }
 
     // Read on-chain decimals (handles WBTC/8, USDT/6, any non-18 token)
     const [quoteDecimals, baseDecimals] = await Promise.all([
