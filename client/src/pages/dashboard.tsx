@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
+import { useWallet } from "@/hooks/use-wallet";
+import { WalletButton } from "@/components/wallet-button";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -107,6 +109,8 @@ function PriceDisplay({ price, label }: { price: number | null; label: string })
 export default function Dashboard() {
   const { toast } = useToast();
   const [selectedChain, setSelectedChain] = useState<"solana-devnet" | "base">("solana-devnet");
+  const wallet = useWallet();
+  const walletConnected = wallet.connected && wallet.chain === selectedChain;
 
   const { data: state, isLoading } = useQuery<TradingState>({
     queryKey: ["/api/ui/state"],
@@ -154,6 +158,39 @@ export default function Dashboard() {
     },
     onError: (err: any) =>
       toast({ title: "Trade Failed", description: err?.message || "Trade execution failed.", variant: "destructive" }),
+  });
+
+  // Live trading mutation — used when a browser wallet is connected.
+  // Flow: build unsigned tx on server → wallet signs + submits → server verifies on-chain.
+  const liveTradeMutation = useMutation({
+    mutationFn: async (side: "BUY" | "SELL") => {
+      if (!wallet.address) throw new Error("Wallet not connected");
+      // Step 1: Get unsigned transaction from server (server never sees private key)
+      const buildResult = await apiRequest("POST", "/api/ui/build-transaction", {
+        chain: selectedChain,
+        pair: config?.pair ?? "SOL-USDC",
+        side,
+        notional: config?.maxNotional ?? 20,
+        walletAddress: wallet.address,
+      });
+      // Step 2: Browser wallet signs and submits — returns tx hash / signature
+      const txHash = await wallet.signTransaction(buildResult);
+      // Step 3: Server verifies the tx exists on-chain, then saves the receipt
+      return apiRequest("POST", "/api/ui/confirm-transaction", {
+        chain: selectedChain,
+        txHash,
+        walletAddress: wallet.address,
+        pair: config?.pair ?? "SOL-USDC",
+        side,
+        notional: config?.maxNotional ?? 20,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] });
+      toast({ title: "Trade Executed", description: "Live trade confirmed on-chain." });
+    },
+    onError: (err: any) =>
+      toast({ title: "Trade Failed", description: err?.message || "Live trade failed.", variant: "destructive" }),
   });
 
   if (isLoading || !state) {
@@ -253,17 +290,29 @@ export default function Dashboard() {
               Base
             </ToggleGroupItem>
           </ToggleGroup>
+          <WalletButton chain={selectedChain} />
           <div className="h-5 w-px bg-border" />
-          <div className="flex items-center gap-2">
-            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Paper</span>
-            <Switch
-              checked={state.paperMode}
-              onCheckedChange={(checked) => paperModeMutation.mutate(checked)}
-              disabled={paperModeMutation.isPending || state.running}
-              data-testid="switch-paper-mode"
-            />
-          </div>
+          {!walletConnected && (
+            <div className="flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Paper</span>
+              <Switch
+                checked={state.paperMode}
+                onCheckedChange={(checked) => paperModeMutation.mutate(checked)}
+                disabled={paperModeMutation.isPending || state.running}
+                data-testid="switch-paper-mode"
+              />
+            </div>
+          )}
+          {walletConnected && (
+            <Badge
+              variant="outline"
+              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+              data-testid="badge-live-trading"
+            >
+              ● Live Trading
+            </Badge>
+          )}
           <div className="h-5 w-px bg-border" />
           <Badge variant={state.running ? "default" : "secondary"} data-testid="badge-agent-status">
             {state.running ? "Agent Running" : "Agent Stopped"}
