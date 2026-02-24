@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { TradingState, TradingConfig } from "@/lib/types";
@@ -8,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Activity,
   TrendingUp,
@@ -104,6 +106,7 @@ function PriceDisplay({ price, label }: { price: number | null; label: string })
 
 export default function Dashboard() {
   const { toast } = useToast();
+  const [selectedChain, setSelectedChain] = useState<"solana-devnet" | "base">("solana-devnet");
 
   const { data: state, isLoading } = useQuery<TradingState>({
     queryKey: ["/api/ui/state"],
@@ -143,12 +146,14 @@ export default function Dashboard() {
   });
 
   const executeMutation = useMutation({
-    mutationFn: (side: "BUY" | "SELL") => apiRequest("POST", "/api/ui/execute-now", { side }),
+    mutationFn: (side: "BUY" | "SELL") =>
+      apiRequest("POST", "/api/ui/execute-now", { side, chain: selectedChain }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] });
       toast({ title: "Trade Executed", description: "Paper trade has been executed." });
     },
-    onError: () => toast({ title: "Error", description: "Trade execution failed.", variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Trade Failed", description: err?.message || "Trade execution failed.", variant: "destructive" }),
   });
 
   if (isLoading || !state) {
@@ -170,6 +175,9 @@ export default function Dashboard() {
   const receipts = state.receipts || [];
   const recentReceipts = receipts.slice(-10).reverse();
 
+  const chainWallet = selectedChain === "base" ? state.baseWallet : state.solanaWallet;
+  const baseUnconfigured = !!state.baseWallet?.startsWith("(");
+
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
@@ -180,29 +188,34 @@ export default function Dashboard() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">PSYOPS - Solana Trading Copilot</h1>
             <p className="text-xs text-muted-foreground">
-              {state.paperMode ? "Paper Mode" : "Live Mode"} &middot; Devnet &middot; {state.pair}
-              {state.walletAddress && (
+              {state.paperMode ? "Paper Mode" : "Live Mode"} &middot;{" "}
+              {selectedChain === "base" ? "Base Mainnet" : "Devnet"} &middot; {state.pair}
+              {chainWallet && (
                 <>
                   {" "}&middot;{" "}
                   <a
-                    href={`https://explorer.solana.com/address/${state.walletAddress}?cluster=devnet`}
+                    href={
+                      selectedChain === "base"
+                        ? `https://basescan.org/address/${chainWallet}`
+                        : `https://explorer.solana.com/address/${chainWallet}?cluster=devnet`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline font-mono"
                     data-testid="link-wallet-explorer"
                   >
-                    {state.walletAddress.slice(0, 4)}...{state.walletAddress.slice(-4)}
+                    {chainWallet.slice(0, 6)}...{chainWallet.slice(-4)}
                   </a>
-                  {state.walletBalance !== null && state.walletBalance !== undefined && (
+                  {selectedChain === "solana-devnet" && state.walletBalance !== null && state.walletBalance !== undefined && (
                     <span className="text-muted-foreground" data-testid="text-wallet-balance">
                       {" "}({state.walletBalance.toFixed(4)} SOL)
                     </span>
                   )}
-                  {state.walletBalance === 0 && (
+                  {selectedChain === "solana-devnet" && state.walletBalance === 0 && (
                     <>
                       {" "}&middot;{" "}
                       <a
-                        href={`https://faucet.solana.com/?address=${state.walletAddress}&network=devnet`}
+                        href={`https://faucet.solana.com/?address=${chainWallet}&network=devnet`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-primary hover:underline inline-flex items-center gap-1"
@@ -219,6 +232,28 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <ToggleGroup
+            type="single"
+            value={selectedChain}
+            onValueChange={(v) => v && setSelectedChain(v as "solana-devnet" | "base")}
+            data-testid="toggle-chain"
+          >
+            <ToggleGroupItem
+              value="solana-devnet"
+              className="text-xs px-2 h-7 data-[state=on]:bg-purple-500/20 data-[state=on]:text-purple-600 dark:data-[state=on]:text-purple-400"
+              data-testid="toggle-chain-solana"
+            >
+              Solana
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="base"
+              className="text-xs px-2 h-7 data-[state=on]:bg-blue-500/20 data-[state=on]:text-blue-600 dark:data-[state=on]:text-blue-400"
+              data-testid="toggle-chain-base"
+            >
+              Base
+            </ToggleGroupItem>
+          </ToggleGroup>
+          <div className="h-5 w-px bg-border" />
           <div className="flex items-center gap-2">
             <FileText className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">Paper</span>
@@ -246,6 +281,12 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {selectedChain === "base" && baseUnconfigured && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400" data-testid="banner-base-unconfigured">
+          Base chain not configured — set BASE_PRIVATE_KEY, BASE_RPC_URL, BASE_PRIMARY_TOKEN, BASE_USDC, BASE_SWAP_ROUTER env vars to enable Base trading.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>

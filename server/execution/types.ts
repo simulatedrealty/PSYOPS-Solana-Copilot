@@ -33,3 +33,15 @@ export interface ExecutionEngine {
   executeTrade(args: ExecuteArgs): Promise<ExecutionReceipt>;
   getWallet(): string;
 }
+
+export interface TradeRequest {
+  chain: "solana-devnet" | "base";
+  pair: string;
+  side: Side;
+  notionalUsd: number;
+  maxSlippagePct?: number;
+  reasons: string[];
+  mode: string;
+  source: "ui" | "skill" | "acp";
+  wallet?: string; // reserved for phase 2 wallet-connect / ACP — ignored in phase 1
+}

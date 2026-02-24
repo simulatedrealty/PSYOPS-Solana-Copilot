@@ -25,6 +25,9 @@ export interface TradingState {
   paperMode: boolean;
   walletAddress: string;
   walletBalance: number | null;
+  activeChains: string[];
+  solanaWallet: string;
+  baseWallet: string;
   pair: string;
   impliedPrice: number | null;
   rollingHigh: number | null;

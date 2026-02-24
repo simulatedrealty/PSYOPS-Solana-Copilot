@@ -3,11 +3,15 @@ import { solanaEngine } from "./solanaEngine";
 import { baseEngine } from "./baseEngine";
 
 /**
- * Returns the active ExecutionEngine based on EXECUTION_CHAIN env var.
- *   EXECUTION_CHAIN=base    → baseEngine  (Uniswap V3 on Base mainnet, QuoterV2 slippage)
- *   EXECUTION_CHAIN=<other> → solanaEngine (Jupiter paper + devnet memo)
+ * Returns the active ExecutionEngine for the given chain.
+ *   chain="base"   → baseEngine  (Uniswap V3 on Base mainnet, QuoterV2 slippage)
+ *   chain=<other>  → solanaEngine (Jupiter paper + devnet memo)
+ *
+ * Defaults to EXECUTION_CHAIN env var so the autonomous loop continues to work
+ * without passing an explicit chain arg.
  */
-export function getEngine(): ExecutionEngine {
-  const chain = process.env.EXECUTION_CHAIN || "solana-devnet";
+export function getEngine(
+  chain: string = process.env.EXECUTION_CHAIN || "solana-devnet"
+): ExecutionEngine {
   return chain === "base" ? baseEngine : solanaEngine;
 }
