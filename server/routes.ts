@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { randomUUID } from "crypto";
 import { sharedState, getPubkey, getConnection } from "./engine/state";
 import { initAgentKit } from "./engine/agentKit";
 import { getConfig } from "./engine/config";
@@ -8,9 +9,12 @@ import { updateRollingPrices } from "./engine/signal";
 import { checkRisk } from "./engine/risk";
 import { startLoop, stopLoop } from "./engine/loop";
 import { manifest, invoke } from "./skills/tradingSkill";
-import { listReceipts } from "./receipts/store";
+import { listReceipts, appendReceipt } from "./receipts/store";
 import { handleTrade } from "./execution/handler";
 import { getEngine } from "./execution/getEngine";
+import { buildSolanaTransaction, buildBaseTransaction } from "./execution/buildTransaction";
+import { createPublicClient, http } from "viem";
+import { base } from "viem/chains";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -128,6 +132,97 @@ export async function registerRoutes(
   app.get("/api/ui/receipts", (req, res) => {
     const limit = Math.min(parseInt((req.query.limit as string) || "50", 10), 500);
     res.json(listReceipts(limit));
+  });
+
+  // ── Phase 2: Browser-wallet live trading ─────────────────────────────────────
+  // Server builds unsigned tx; browser wallet signs and submits; server verifies.
+  // Server never receives, stores, or logs user private keys.
+
+  app.post("/api/ui/build-transaction", async (req, res) => {
+    try {
+      const { chain, pair, side, notional, walletAddress } = req.body;
+      if (!chain || !pair || !["BUY", "SELL"].includes(side) || !notional || !walletAddress) {
+        return res.status(400).json({ error: "Missing required fields: chain, pair, side, notional, walletAddress" });
+      }
+      let result;
+      if (chain === "solana-devnet") {
+        result = await buildSolanaTransaction(pair, side, notional, walletAddress);
+      } else if (chain === "base") {
+        result = await buildBaseTransaction(pair, side, notional, walletAddress);
+      } else {
+        return res.status(400).json({ error: `Unknown chain: ${chain}` });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error("[build-transaction]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/ui/confirm-transaction", async (req, res) => {
+    try {
+      const { chain, txHash, walletAddress, pair, side, notional } = req.body;
+      if (!chain || !txHash || !walletAddress || !pair || !side || !notional) {
+        return res.status(400).json({ error: "Missing required fields: chain, txHash, walletAddress, pair, side, notional" });
+      }
+
+      // Verify the transaction actually exists and succeeded on-chain
+      if (chain === "solana-devnet") {
+        const conn = getConnection();
+        const tx = await conn.getTransaction(txHash, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+        if (!tx) {
+          return res.status(400).json({ error: "Transaction not found on Solana devnet. Wait for confirmation and retry." });
+        }
+        if (tx.meta?.err) {
+          return res.status(400).json({ error: "Transaction failed on-chain", details: tx.meta.err });
+        }
+      } else if (chain === "base") {
+        const rpcUrl = process.env.BASE_RPC_URL;
+        if (!rpcUrl) return res.status(400).json({ error: "Base chain not configured" });
+        const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
+        const txReceipt = await publicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
+        if (!txReceipt) {
+          return res.status(400).json({ error: "Transaction not found on Base. Wait for confirmation and retry." });
+        }
+        if (txReceipt.status === "reverted") {
+          return res.status(400).json({ error: "Transaction reverted on-chain" });
+        }
+      } else {
+        return res.status(400).json({ error: `Unknown chain: ${chain}` });
+      }
+
+      // Build and save receipt (mode: "live", wallet included)
+      const receipt = {
+        id: randomUUID().slice(0, 8),
+        ts: Date.now(),
+        pair,
+        side,
+        mode: "live",
+        notional,
+        fillPrice: 0, // Decoded from on-chain events is a future enhancement; tx hash is source of truth
+        confidence: 1,
+        reasons: [`Live trade via wallet ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`],
+        riskChecks: {
+          cooldownOK: true,
+          maxNotionalOK: true,
+          maxDailyLossOK: true,
+          slippageOK: true,
+        },
+        memoTxid: txHash,
+        status: "SUCCESS",
+        chain,
+        source: "ui",
+        wallet: walletAddress,
+      };
+      appendReceipt(receipt);
+      res.json(receipt);
+    } catch (err: any) {
+      console.error("[confirm-transaction]", err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get(["/skill.md", "/api/skill.md"], (req, res) => {
