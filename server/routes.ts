@@ -3,12 +3,14 @@ import { createServer, type Server } from "http";
 import { sharedState, getPubkey, getConnection } from "./engine/state";
 import { initAgentKit } from "./engine/agentKit";
 import { getConfig } from "./engine/config";
-import { getMarket, getSignal, executeTrade, getReceipts, getReceiptById } from "./engine/tradingEngine";
+import { getMarket, getSignal, getReceipts, getReceiptById } from "./engine/tradingEngine";
 import { updateRollingPrices } from "./engine/signal";
 import { checkRisk } from "./engine/risk";
 import { startLoop, stopLoop } from "./engine/loop";
 import { manifest, invoke } from "./skills/tradingSkill";
 import { listReceipts } from "./receipts/store";
+import { handleTrade } from "./execution/handler";
+import { getEngine } from "./execution/getEngine";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -34,6 +36,9 @@ export async function registerRoutes(
       paperMode: sharedState.paperMode,
       walletAddress: getPubkey(),
       walletBalance: cachedBalance,
+      activeChains: ["solana-devnet", "base"],
+      solanaWallet: getEngine("solana-devnet").getWallet(),
+      baseWallet: getEngine("base").getWallet(),
       pair: getConfig().pair,
       impliedPrice: sharedState.lastImpliedPrice,
       rollingHigh: sharedState.rollingPrices.length > 0 ? Math.max(...sharedState.rollingPrices) : null,
@@ -86,6 +91,7 @@ export async function registerRoutes(
       if (!side || !["BUY", "SELL"].includes(side)) {
         return res.status(400).json({ error: "side must be BUY or SELL" });
       }
+      const chain = req.body.chain === "base" ? "base" : "solana-devnet";
       const cfg = getConfig();
       const market = await getMarket(cfg.pair);
       if (market.impliedPrice > 0) {
@@ -101,15 +107,19 @@ export async function registerRoutes(
           checks: risk.checks,
         });
       }
-      const receipt = await executeTrade(
-        cfg.pair,
+      const result = await handleTrade({
+        chain,
+        pair: cfg.pair,
         side,
-        cfg.maxNotional,
-        0.5,
-        ["Manual execution from dashboard"],
-        "manual"
-      );
-      res.json(receipt);
+        notionalUsd: cfg.maxNotional,
+        reasons: ["Manual execution from dashboard"],
+        mode: "manual",
+        source: "ui",
+      });
+      if ("error" in result) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -123,10 +133,10 @@ export async function registerRoutes(
   app.get(["/skill.md", "/api/skill.md"], (req, res) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 
-    const md = `# PSYOPS — Solana Trading Copilot Skill
+    const md = `# PSYOPS — Multi-Chain Trading Copilot Skill
 
-PSYOPS is an LLM-driven autonomous trading copilot for Solana.
-It runs in paper mode but commits on-chain memo receipts on Solana devnet.
+PSYOPS is an LLM-driven autonomous trading copilot supporting Solana devnet and Base mainnet.
+It runs in paper mode by default and commits on-chain memo receipts on Solana devnet.
 
 ## Base URL
 
@@ -140,7 +150,7 @@ Body:
 
 \`\`\`json
 {
-  "action": "get_market | get_signal | propose_trade | execute_trade | get_receipt",
+  "action": "get_market | get_signal | propose_trade | execute_trade | get_receipt | set_chain",
   "args": {}
 }
 \`\`\`
@@ -152,8 +162,20 @@ Body:
 | get_market | { "pair": "SOL-USDC" } | Get current implied price and slippage from Jupiter |
 | get_signal | { "pair": "SOL-USDC" } | Get breakout signal (BUY/SELL/HOLD) with strength |
 | propose_trade | { "pair": "SOL-USDC", "side": "BUY", "notional": 20 } | Run risk checks and get trade explanation |
-| execute_trade | { "pair": "SOL-USDC", "side": "BUY", "notional": 20, "confidence": 0.8 } | Execute paper trade and write on-chain memo |
+| execute_trade | { "pair": "SOL-USDC", "side": "BUY", "notional": 20, "chain": "solana-devnet" } | Execute trade on the specified chain (default: solana-devnet) |
 | get_receipt | { "id": "<receipt_id>" } | Retrieve a specific trade receipt |
+| set_chain | { "chain": "solana-devnet" \| "base" } | Validate chain availability and return wallet info |
+
+### Chain Parameter
+
+All actions accept an optional \`chain\` arg: \`"solana-devnet"\` (default) or \`"base"\`.
+
+\`\`\`json
+{ "action": "execute_trade", "args": { "pair": "SOL-USDC", "side": "BUY", "notional": 20, "chain": "solana-devnet" } }
+\`\`\`
+
+Base chain requires \`BASE_PRIVATE_KEY\`, \`BASE_RPC_URL\`, \`BASE_PRIMARY_TOKEN\`, \`BASE_USDC\`, \`BASE_SWAP_ROUTER\` env vars.
+If not configured, returns \`{ "error": "Base chain not configured. Required: ..." }\`.
 
 ### Example
 
@@ -169,8 +191,9 @@ GET ${baseUrl}/api/skill/manifest
 
 ## On-chain Receipts
 
-Each executed trade writes a Solana devnet memo transaction
-containing trade details and receipt ID for audit.
+Each Solana trade writes a devnet memo transaction containing trade details and receipt ID for audit.
+Base trades write an on-chain Uniswap V3 swap transaction on Base mainnet.
+Receipts include \`chain\` and \`source\` fields identifying the execution path.
 `;
 
     res.setHeader("Content-Type", "text/markdown");
