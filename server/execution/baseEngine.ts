@@ -182,18 +182,30 @@ export const baseEngine: ExecutionEngine = {
     // ── Strict env config (no silent fallbacks) ───────────────────────────────
     const rpcUrl = requireEnv("BASE_RPC_URL");
     const pk = requireEnv("BASE_PRIVATE_KEY");
-    const primaryToken = requireEnv("BASE_PRIMARY_TOKEN") as Address;
-    const usdcAddress = requireEnv("BASE_USDC") as Address;
     const swapRouter = requireEnv("BASE_SWAP_ROUTER") as Address;
     const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
     const explorerPrefix =
       process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
 
     const isBuy = side === "BUY";
-    const tokenIn: Address = isBuy ? usdcAddress : primaryToken;
-    const tokenOut: Address = isBuy ? primaryToken : usdcAddress;
+
+    // Per-request token overrides allow any ERC20 pair on Base without env var changes.
+    // args.tokenIn/tokenOut are swap-direction-aware (what you spend / what you get).
+    // Falls back to BASE_PRIMARY_TOKEN / BASE_USDC env vars for the standard pair.
+    let tokenIn: Address;
+    let tokenOut: Address;
+    if (args.tokenIn && args.tokenOut) {
+      tokenIn  = args.tokenIn  as Address;
+      tokenOut = args.tokenOut as Address;
+    } else {
+      const primaryToken = requireEnv("BASE_PRIMARY_TOKEN") as Address;
+      const usdcAddress  = requireEnv("BASE_USDC") as Address;
+      tokenIn  = isBuy ? usdcAddress  : primaryToken;
+      tokenOut = isBuy ? primaryToken : usdcAddress;
+    }
+
     const [baseSymbol] = pair.split("-");
-    const inTokenLabel = isBuy ? "USDC" : baseSymbol;
+    const inTokenLabel  = isBuy ? "USDC" : baseSymbol;
     const outTokenLabel = isBuy ? baseSymbol : "USDC";
 
     const key = (pk.startsWith("0x") ? pk : `0x${pk}`) as `0x${string}`;
@@ -237,14 +249,16 @@ export const baseEngine: ExecutionEngine = {
         );
         let estimatedIn = BigInt(0);
         try {
+          // tokenIn = base token (spending), tokenOut = quote/USDC (receiving)
+          // This is already correct since tokenIn/tokenOut are swap-direction-aware.
           const { result } = await publicClient.simulateContract({
             address: QUOTER_V2,
             abi: QUOTER_V2_ABI,
             functionName: "quoteExactOutputSingle",
             args: [
               {
-                tokenIn: primaryToken,
-                tokenOut: usdcAddress,
+                tokenIn,
+                tokenOut,
                 amount: usdcAmountRaw,
                 fee: poolFee,
                 sqrtPriceLimitX96: BigInt(0),

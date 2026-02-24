@@ -20,12 +20,20 @@ export interface Receipt {
   status: "SUCCESS" | "FAILED";
 }
 
+export interface ActiveTokens {
+  base: string;
+  quote: string;
+}
+
 export interface TradingState {
   running: boolean;
   paperMode: boolean;
   walletAddress: string;
   walletBalance: number | null;
   activeChains: string[];
+  activeChain: "solana-devnet" | "base";
+  activePair: string;
+  activeTokens: ActiveTokens;
   solanaWallet: string;
   baseWallet: string;
   pair: string;

@@ -62,6 +62,15 @@ export async function handleTrade(request: TradeRequest): Promise<HandlerResult>
   const engine = getEngine(request.chain);
   const cfg = getConfig();
 
+  // Resolve per-request token overrides (swap-direction-aware)
+  // ACP jobs pass these without mutating sharedState.activeTokens.
+  const tokenOverrides = request.tokens
+    ? {
+        tokenIn:  request.side === "BUY" ? request.tokens.quote : request.tokens.base,
+        tokenOut: request.side === "BUY" ? request.tokens.base  : request.tokens.quote,
+      }
+    : {};
+
   let execResult;
   try {
     execResult = await engine.executeTrade({
@@ -71,6 +80,7 @@ export async function handleTrade(request: TradeRequest): Promise<HandlerResult>
       maxSlippagePct: request.maxSlippagePct ?? cfg.maxSlippageBps / 100,
       reasons: request.reasons,
       mode: request.mode,
+      ...tokenOverrides,
     });
   } catch (err: any) {
     return { error: err.message };

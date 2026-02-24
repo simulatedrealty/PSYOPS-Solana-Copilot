@@ -20,7 +20,16 @@ export interface TradeAction {
   price: number;
 }
 
+export interface ActiveTokens {
+  base: string;  // token being traded (SOL mint or Base ERC20 address)
+  quote: string; // quote token (USDC mint or address)
+}
+
 export interface SharedState {
+  // ── Active chain / pair — rollingPrices must be reset when either changes ──
+  activeChain: "solana-devnet" | "base";
+  activePair: string;      // display label, e.g. "SOL-USDC" or "VIRTUAL-USDC"
+  activeTokens: ActiveTokens;
   rollingPrices: number[];
   running: boolean;
   paperMode: boolean;
@@ -47,7 +56,14 @@ export interface SharedState {
   lastExplorerUrl: string | null;
 }
 
+// Solana devnet default mints
+const SOL_MINT  = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
 export const sharedState: SharedState = {
+  activeChain: "solana-devnet",
+  activePair: "SOL-USDC",
+  activeTokens: { base: SOL_MINT, quote: USDC_MINT },
   rollingPrices: [],
   running: false,
   paperMode: true,

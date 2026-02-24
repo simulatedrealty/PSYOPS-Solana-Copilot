@@ -5,6 +5,7 @@ import type { TradingState, TradingConfig } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
@@ -32,14 +33,15 @@ import {
   Receipt,
   FileText,
   Wallet,
+  Search,
 } from "lucide-react";
 
 function SignalBadge({ signal }: { signal: string | null }) {
   if (!signal) return <Badge variant="secondary">N/A</Badge>;
   const variants: Record<string, { className: string; icon: React.ReactNode }> = {
-    BUY: { className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", icon: <TrendingUp className="w-3 h-3" /> },
-    SELL: { className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30", icon: <TrendingDown className="w-3 h-3" /> },
-    HOLD: { className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30", icon: <Minus className="w-3 h-3" /> },
+    BUY:  { className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", icon: <TrendingUp className="w-3 h-3" /> },
+    SELL: { className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",               icon: <TrendingDown className="w-3 h-3" /> },
+    HOLD: { className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",       icon: <Minus className="w-3 h-3" /> },
   };
   const v = variants[signal] || variants.HOLD;
   return (
@@ -52,19 +54,15 @@ function SignalBadge({ signal }: { signal: string | null }) {
 
 function RiskIndicator({ allowed, checks }: { allowed: boolean; checks: TradingState["riskChecks"] }) {
   const allChecks = [
-    { label: "Cooldown", ok: checks.cooldownOK },
+    { label: "Cooldown",     ok: checks.cooldownOK },
     { label: "Max Notional", ok: checks.maxNotionalOK },
-    { label: "Daily Loss", ok: checks.maxDailyLossOK },
-    { label: "Slippage", ok: checks.slippageOK },
+    { label: "Daily Loss",   ok: checks.maxDailyLossOK },
+    { label: "Slippage",     ok: checks.slippageOK },
   ];
   return (
     <div className="space-y-2" data-testid="risk-indicator">
       <div className="flex items-center gap-2">
-        {allowed ? (
-          <ShieldCheck className="w-4 h-4 text-emerald-500" />
-        ) : (
-          <ShieldAlert className="w-4 h-4 text-red-500" />
-        )}
+        {allowed ? <ShieldCheck className="w-4 h-4 text-emerald-500" /> : <ShieldAlert className="w-4 h-4 text-red-500" />}
         <span className="text-sm font-medium">{allowed ? "Risk Allowed" : "Risk Blocked"}</span>
       </div>
       <div className="grid grid-cols-2 gap-1">
@@ -80,7 +78,7 @@ function RiskIndicator({ allowed, checks }: { allowed: boolean; checks: TradingS
 }
 
 function ConfidenceMeter({ value }: { value: number | null }) {
-  const pct = value != null ? Math.round(value * 100) : 0;
+  const pct   = value != null ? Math.round(value * 100) : 0;
   const color = pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-red-500";
   return (
     <div className="space-y-1" data-testid="confidence-meter">
@@ -108,9 +106,10 @@ function PriceDisplay({ price, label }: { price: number | null; label: string })
 
 export default function Dashboard() {
   const { toast } = useToast();
-  const [selectedChain, setSelectedChain] = useState<"solana-devnet" | "base">("solana-devnet");
   const wallet = useWallet();
-  const walletConnected = wallet.connected && wallet.chain === selectedChain;
+
+  // Base token address input — for trading any ERC20 token on Base
+  const [baseTokenInput, setBaseTokenInput] = useState("");
 
   const { data: state, isLoading } = useQuery<TradingState>({
     queryKey: ["/api/ui/state"],
@@ -121,6 +120,22 @@ export default function Dashboard() {
   const { data: config } = useQuery<TradingConfig>({
     queryKey: ["/api/ui/config"],
     staleTime: 30000,
+  });
+
+  // Server is source of truth for active chain — read from state
+  const activeChain = state?.activeChain ?? "solana-devnet";
+  const walletConnected = wallet.connected && wallet.chain === activeChain;
+
+  // set-chain mutation — updates server active chain/pair/tokens and resets rolling prices
+  const setChainMutation = useMutation({
+    mutationFn: (body: {
+      chain: "solana-devnet" | "base";
+      pair?: string;
+      baseToken?: string;
+      quoteToken?: string;
+    }) => apiRequest("POST", "/api/ui/set-chain", body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] }),
+    onError: () => toast({ title: "Error", description: "Failed to switch chain.", variant: "destructive" }),
   });
 
   const startMutation = useMutation({
@@ -143,15 +158,12 @@ export default function Dashboard() {
 
   const paperModeMutation = useMutation({
     mutationFn: (enabled: boolean) => apiRequest("POST", "/api/ui/paper-mode", { enabled }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] }),
     onError: () => toast({ title: "Error", description: "Failed to toggle paper mode.", variant: "destructive" }),
   });
 
   const executeMutation = useMutation({
-    mutationFn: (side: "BUY" | "SELL") =>
-      apiRequest("POST", "/api/ui/execute-now", { side, chain: selectedChain }),
+    mutationFn: (side: "BUY" | "SELL") => apiRequest("POST", "/api/ui/execute-now", { side }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/ui/state"] });
       toast({ title: "Trade Executed", description: "Paper trade has been executed." });
@@ -160,27 +172,24 @@ export default function Dashboard() {
       toast({ title: "Trade Failed", description: err?.message || "Trade execution failed.", variant: "destructive" }),
   });
 
-  // Live trading mutation — used when a browser wallet is connected.
-  // Flow: build unsigned tx on server → wallet signs + submits → server verifies on-chain.
+  // Live trading flow: build unsigned tx → wallet signs → server verifies
   const liveTradeMutation = useMutation({
     mutationFn: async (side: "BUY" | "SELL") => {
       if (!wallet.address) throw new Error("Wallet not connected");
-      // Step 1: Get unsigned transaction from server (server never sees private key)
+      const activePair = state?.activePair ?? "SOL-USDC";
       const buildResult = await apiRequest("POST", "/api/ui/build-transaction", {
-        chain: selectedChain,
-        pair: config?.pair ?? "SOL-USDC",
+        chain: activeChain,
+        pair: activePair,
         side,
         notional: config?.maxNotional ?? 20,
         walletAddress: wallet.address,
       });
-      // Step 2: Browser wallet signs and submits — returns tx hash / signature
       const txHash = await wallet.signTransaction(buildResult);
-      // Step 3: Server verifies the tx exists on-chain, then saves the receipt
       return apiRequest("POST", "/api/ui/confirm-transaction", {
-        chain: selectedChain,
+        chain: activeChain,
         txHash,
         walletAddress: wallet.address,
-        pair: config?.pair ?? "SOL-USDC",
+        pair: activePair,
         side,
         notional: config?.maxNotional ?? 20,
       });
@@ -212,27 +221,45 @@ export default function Dashboard() {
   const receipts = state.receipts || [];
   const recentReceipts = receipts.slice(-10).reverse();
 
-  const chainWallet = selectedChain === "base" ? state.baseWallet : state.solanaWallet;
+  const chainWallet      = activeChain === "base" ? state.baseWallet : state.solanaWallet;
   const baseUnconfigured = !!state.baseWallet?.startsWith("(");
+
+  const handleChainToggle = (v: string) => {
+    if (!v) return;
+    const newChain = v as "solana-devnet" | "base";
+    setChainMutation.mutate({ chain: newChain });
+    // If wallet is on the other chain, also auto-connect or show button
+    if (wallet.connected && wallet.chain !== newChain) {
+      wallet.disconnect();
+    }
+  };
+
+  const handleBaseTokenApply = () => {
+    const addr = baseTokenInput.trim();
+    if (!addr) return;
+    setChainMutation.mutate({ chain: "base", baseToken: addr });
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto">
+      {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center w-9 h-9 rounded-md bg-primary/10">
             <Activity className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">PSYOPS - Solana Trading Copilot</h1>
+            <h1 className="text-xl font-semibold tracking-tight">PSYOPS — Multi-Chain Trading Copilot</h1>
             <p className="text-xs text-muted-foreground">
               {state.paperMode ? "Paper Mode" : "Live Mode"} &middot;{" "}
-              {selectedChain === "base" ? "Base Mainnet" : "Devnet"} &middot; {state.pair}
+              {activeChain === "base" ? "Base Mainnet" : "Devnet"} &middot;{" "}
+              <span className="font-mono">{state.activePair}</span>
               {chainWallet && (
                 <>
                   {" "}&middot;{" "}
                   <a
                     href={
-                      selectedChain === "base"
+                      activeChain === "base"
                         ? `https://basescan.org/address/${chainWallet}`
                         : `https://explorer.solana.com/address/${chainWallet}?cluster=devnet`
                     }
@@ -243,12 +270,12 @@ export default function Dashboard() {
                   >
                     {chainWallet.slice(0, 6)}...{chainWallet.slice(-4)}
                   </a>
-                  {selectedChain === "solana-devnet" && state.walletBalance !== null && state.walletBalance !== undefined && (
+                  {activeChain === "solana-devnet" && state.walletBalance !== null && state.walletBalance !== undefined && (
                     <span className="text-muted-foreground" data-testid="text-wallet-balance">
                       {" "}({state.walletBalance.toFixed(4)} SOL)
                     </span>
                   )}
-                  {selectedChain === "solana-devnet" && state.walletBalance === 0 && (
+                  {activeChain === "solana-devnet" && state.walletBalance === 0 && (
                     <>
                       {" "}&middot;{" "}
                       <a
@@ -268,11 +295,13 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Chain toggle — fires set-chain on server */}
           <ToggleGroup
             type="single"
-            value={selectedChain}
-            onValueChange={(v) => v && setSelectedChain(v as "solana-devnet" | "base")}
+            value={activeChain}
+            onValueChange={handleChainToggle}
             data-testid="toggle-chain"
           >
             <ToggleGroupItem
@@ -290,8 +319,11 @@ export default function Dashboard() {
               Base
             </ToggleGroupItem>
           </ToggleGroup>
-          <WalletButton chain={selectedChain} />
+
+          <WalletButton chain={activeChain} />
+
           <div className="h-5 w-px bg-border" />
+
           {!walletConnected && (
             <div className="flex items-center gap-2">
               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
@@ -313,7 +345,9 @@ export default function Dashboard() {
               ● Live Trading
             </Badge>
           )}
+
           <div className="h-5 w-px bg-border" />
+
           <Badge variant={state.running ? "default" : "secondary"} data-testid="badge-agent-status">
             {state.running ? "Agent Running" : "Agent Stopped"}
           </Badge>
@@ -331,12 +365,45 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {selectedChain === "base" && baseUnconfigured && (
+      {/* ── Base token address input — any ERC20 on Base ── */}
+      {activeChain === "base" && (
+        <div className="flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2" data-testid="panel-base-token">
+          <Search className="w-3.5 h-3.5 text-blue-500/70 shrink-0" />
+          <span className="text-xs text-muted-foreground whitespace-nowrap">Base token:</span>
+          <Input
+            className="h-6 text-xs font-mono border-0 bg-transparent shadow-none focus-visible:ring-0 px-1 min-w-0"
+            placeholder="0x… contract address"
+            value={baseTokenInput}
+            onChange={(e) => setBaseTokenInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleBaseTokenApply()}
+            data-testid="input-base-token"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-xs shrink-0"
+            onClick={handleBaseTokenApply}
+            disabled={setChainMutation.isPending || !baseTokenInput.trim()}
+            data-testid="button-base-token-apply"
+          >
+            Apply
+          </Button>
+          {state.activeTokens?.base && !state.activeTokens.base.startsWith("0x0000") && (
+            <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[120px]" title={state.activeTokens.base}>
+              {state.activeTokens.base.slice(0, 6)}…{state.activeTokens.base.slice(-4)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Base unconfigured banner ── */}
+      {activeChain === "base" && baseUnconfigured && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400" data-testid="banner-base-unconfigured">
           Base chain not configured — set BASE_PRIVATE_KEY, BASE_RPC_URL, BASE_PRIMARY_TOKEN, BASE_USDC, BASE_SWAP_ROUTER env vars to enable Base trading.
         </div>
       )}
 
+      {/* ── Cards grid ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
@@ -348,7 +415,7 @@ export default function Dashboard() {
               {state.impliedPrice != null ? `$${state.impliedPrice.toFixed(2)}` : "Fetching..."}
             </div>
             <div className="flex items-center justify-between gap-2">
-              <PriceDisplay price={state.rollingLow} label="Rolling Low" />
+              <PriceDisplay price={state.rollingLow}  label="Rolling Low" />
               <div className="h-6 w-px bg-border" />
               <PriceDisplay price={state.rollingHigh} label="Rolling High" />
             </div>
@@ -415,7 +482,7 @@ export default function Dashboard() {
               <div>
                 <div className="text-xs text-muted-foreground mb-0.5">Position</div>
                 <div className="font-mono text-sm font-medium" data-testid="text-position">
-                  {state.paperPosition.toFixed(4)} SOL
+                  {state.paperPosition.toFixed(4)}
                 </div>
               </div>
               <div>
@@ -450,13 +517,15 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Execute a paper trade manually using the current market price.
+              {walletConnected
+                ? "Execute a live trade using your connected wallet."
+                : "Execute a paper trade manually using the current market price."}
             </p>
             <div className="flex items-center gap-2">
               <Button
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                onClick={() => executeMutation.mutate("BUY")}
-                disabled={executeMutation.isPending}
+                onClick={() => walletConnected ? liveTradeMutation.mutate("BUY") : executeMutation.mutate("BUY")}
+                disabled={executeMutation.isPending || liveTradeMutation.isPending}
                 data-testid="button-manual-buy"
               >
                 <ArrowUpCircle className="w-4 h-4 mr-1.5" />
@@ -464,8 +533,8 @@ export default function Dashboard() {
               </Button>
               <Button
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white"
-                onClick={() => executeMutation.mutate("SELL")}
-                disabled={executeMutation.isPending}
+                onClick={() => walletConnected ? liveTradeMutation.mutate("SELL") : executeMutation.mutate("SELL")}
+                disabled={executeMutation.isPending || liveTradeMutation.isPending}
                 data-testid="button-manual-sell"
               >
                 <ArrowDownCircle className="w-4 h-4 mr-1.5" />
@@ -515,7 +584,11 @@ export default function Dashboard() {
                         </span>
                         {r.memoTxid && r.memoTxid !== "N/A" ? (
                           <a
-                            href={`https://explorer.solana.com/tx/${r.memoTxid}?cluster=devnet`}
+                            href={
+                              activeChain === "base"
+                                ? `https://basescan.org/tx/${r.memoTxid}`
+                                : `https://explorer.solana.com/tx/${r.memoTxid}?cluster=devnet`
+                            }
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-primary hover:text-primary/80"

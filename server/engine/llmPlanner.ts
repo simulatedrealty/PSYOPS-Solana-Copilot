@@ -12,6 +12,7 @@ function getOpenAI() {
 }
 
 export interface LLMContext {
+  chain: "solana-devnet" | "base";
   pair: string;
   impliedPrice: number;
   rollingHigh: number;
@@ -37,12 +38,13 @@ export interface LLMDecision {
   reasons: string[];
 }
 
-const SYSTEM_PROMPT = `You are a Solana Autonomous Trading Agent. You receive live market context, breakout signals, and risk constraints. You must decide: BUY, SELL, or HOLD.
+const SYSTEM_PROMPT = `You are a Multi-Chain Autonomous Trading Agent supporting Solana devnet and Base mainnet. You receive live market context (chain, pair, price, breakout signals, risk constraints) and must decide: BUY, SELL, or HOLD.
 
 Rules:
 - NEVER BUY if slippage is above threshold.
 - NEVER EXECUTE trades if risk.allowed = false.
 - HOLD if context is unclear.
+- The "chain" and "pair" fields tell you exactly what you are trading (e.g. VIRTUAL-USDC on Base, or SOL-USDC on Solana devnet).
 - Provide 2-4 short bullet points explaining your reasoning.
 - Provide a confidence score between 0 and 1.
 

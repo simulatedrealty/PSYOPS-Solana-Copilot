@@ -5,6 +5,7 @@ import { sharedState, getPubkey, getConnection } from "./engine/state";
 import { initAgentKit } from "./engine/agentKit";
 import { getConfig } from "./engine/config";
 import { getMarket, getSignal, getReceipts, getReceiptById } from "./engine/tradingEngine";
+import { getMarketForChain } from "./engine/market";
 import { updateRollingPrices } from "./engine/signal";
 import { checkRisk } from "./engine/risk";
 import { startLoop, stopLoop } from "./engine/loop";
@@ -41,9 +42,12 @@ export async function registerRoutes(
       walletAddress: getPubkey(),
       walletBalance: cachedBalance,
       activeChains: ["solana-devnet", "base"],
+      activeChain: sharedState.activeChain,
+      activePair: sharedState.activePair,
+      activeTokens: sharedState.activeTokens,
       solanaWallet: getEngine("solana-devnet").getWallet(),
       baseWallet: getEngine("base").getWallet(),
-      pair: getConfig().pair,
+      pair: sharedState.activePair,
       impliedPrice: sharedState.lastImpliedPrice,
       rollingHigh: sharedState.rollingPrices.length > 0 ? Math.max(...sharedState.rollingPrices) : null,
       rollingLow: sharedState.rollingPrices.length > 0 ? Math.min(...sharedState.rollingPrices) : null,
@@ -89,15 +93,67 @@ export async function registerRoutes(
     res.json({ paperMode: sharedState.paperMode });
   });
 
+  // POST /api/ui/set-chain
+  // Changes the active chain/pair and resolves token addresses.
+  // Resets rollingPrices and stale signal state so the new pair starts clean.
+  app.post("/api/ui/set-chain", (req, res) => {
+    const { chain, pair, baseToken, quoteToken } = req.body;
+
+    if (chain !== "solana-devnet" && chain !== "base") {
+      return res.status(400).json({ error: 'chain must be "solana-devnet" or "base"' });
+    }
+
+    const prevPair = sharedState.activePair;
+
+    // Resolve token addresses
+    if (chain === "solana-devnet") {
+      const SOL_MINT  = "So11111111111111111111111111111111111111112";
+      const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+      sharedState.activeTokens = {
+        base:  baseToken  || SOL_MINT,
+        quote: quoteToken || USDC_MINT,
+      };
+      sharedState.activePair = pair || "SOL-USDC";
+    } else {
+      // Base — caller provides explicit ERC20 addresses for any token, or fall back to env vars
+      sharedState.activeTokens = {
+        base:  baseToken  || process.env.BASE_PRIMARY_TOKEN || "",
+        quote: quoteToken || process.env.BASE_USDC          || "",
+      };
+      sharedState.activePair = pair || "BASE-USDC";
+    }
+
+    sharedState.activeChain = chain;
+
+    // Reset rolling prices whenever chain or pair changes — old prices are for a different token
+    if (sharedState.activeChain !== chain || sharedState.activePair !== prevPair) {
+      sharedState.rollingPrices = [];
+    }
+    sharedState.rollingPrices  = [];
+    sharedState.lastSignal     = null;
+    sharedState.lastStrength   = null;
+    sharedState.lastConfidence = null;
+    sharedState.lastReasons    = [];
+    sharedState.lastImpliedPrice = null;
+
+    res.json({
+      activeChain:  sharedState.activeChain,
+      activePair:   sharedState.activePair,
+      activeTokens: sharedState.activeTokens,
+    });
+  });
+
   app.post("/api/ui/execute-now", async (req, res) => {
     try {
       const side = req.body.side as "BUY" | "SELL";
       if (!side || !["BUY", "SELL"].includes(side)) {
         return res.status(400).json({ error: "side must be BUY or SELL" });
       }
-      const chain = req.body.chain === "base" ? "base" : "solana-devnet";
       const cfg = getConfig();
-      const market = await getMarket(cfg.pair);
+      const activeChain  = sharedState.activeChain;
+      const activePair   = sharedState.activePair;
+      const activeTokens = sharedState.activeTokens;
+      const market = await getMarketForChain(activeChain, activePair, activeTokens, cfg.maxNotional);
       if (market.impliedPrice > 0) {
         updateRollingPrices(market.impliedPrice);
         sharedState.lastImpliedPrice = market.impliedPrice;
@@ -112,13 +168,14 @@ export async function registerRoutes(
         });
       }
       const result = await handleTrade({
-        chain,
-        pair: cfg.pair,
+        chain: activeChain,
+        pair: activePair,
         side,
         notionalUsd: cfg.maxNotional,
         reasons: ["Manual execution from dashboard"],
         mode: "manual",
         source: "ui",
+        tokens: activeTokens,
       });
       if ("error" in result) {
         return res.status(400).json(result);

@@ -1,9 +1,11 @@
 import { sharedState } from "./state";
 import { getConfig } from "./config";
-import { getMarket, getSignal, executeTrade } from "./tradingEngine";
+import { getMarketForChain } from "./market";
+import { getSignal } from "./tradingEngine";
 import { updateRollingPrices } from "./signal";
 import { checkRisk } from "./risk";
 import { decideAction, type LLMContext } from "./llmPlanner";
+import { handleTrade } from "../execution/handler";
 
 let loopTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -36,19 +38,23 @@ async function tick(): Promise<void> {
   if (!sharedState.running) return;
 
   const cfg = getConfig();
-  const pair = cfg.pair;
+
+  // Read active chain/pair/tokens from shared state — set by /api/ui/set-chain or dashboard toggle
+  const activeChain  = sharedState.activeChain;
+  const activePair   = sharedState.activePair;
+  const activeTokens = sharedState.activeTokens;
 
   try {
-    const market = await getMarket(pair);
+    const market = await getMarketForChain(activeChain, activePair, activeTokens, cfg.maxNotional);
     if (market.impliedPrice <= 0) {
-      console.log("[loop] Invalid market price, skipping cycle");
+      console.log(`[loop] Invalid market price on ${activeChain}/${activePair}, skipping cycle`);
       return;
     }
 
     sharedState.lastImpliedPrice = market.impliedPrice;
     updateRollingPrices(market.impliedPrice);
 
-    const signal = getSignal(pair);
+    const signal = getSignal(activePair);
     sharedState.lastSignal = signal.signal;
     sharedState.lastStrength = signal.strength;
 
@@ -63,7 +69,8 @@ async function tick(): Promise<void> {
     }));
 
     const context: LLMContext = {
-      pair,
+      chain: activeChain,
+      pair: activePair,
       impliedPrice: market.impliedPrice,
       rollingHigh: signal.rollingHigh,
       rollingLow: signal.rollingLow,
@@ -78,22 +85,28 @@ async function tick(): Promise<void> {
     sharedState.lastConfidence = decision.confidence;
     sharedState.lastReasons = decision.reasons;
 
-    console.log(`[loop] Decision: ${decision.action} (conf=${decision.confidence.toFixed(2)})`);
+    console.log(`[loop] ${activeChain}/${activePair} — Decision: ${decision.action} (conf=${decision.confidence.toFixed(2)})`);
 
     if (
       (decision.action === "BUY" || decision.action === "SELL") &&
       risk.allowed &&
       decision.confidence > 0.3
     ) {
-      const receipt = await executeTrade(
-        pair,
-        decision.action,
-        cfg.maxNotional,
-        decision.confidence,
-        decision.reasons,
-        "auto"
-      );
-      console.log(`[loop] Executed ${decision.action} → receipt ${receipt.id}, memo: ${receipt.memoTxid}`);
+      const result = await handleTrade({
+        chain: activeChain,
+        pair: activePair,
+        side: decision.action,
+        notionalUsd: cfg.maxNotional,
+        reasons: decision.reasons,
+        mode: "auto",
+        source: "ui",
+        tokens: activeTokens,
+      });
+      if ("error" in result) {
+        console.error(`[loop] Trade failed: ${result.error}`);
+      } else {
+        console.log(`[loop] Executed ${decision.action} → receipt ${result.id}`);
+      }
     }
   } catch (err: any) {
     console.error("[loop] Tick error:", err.message);
