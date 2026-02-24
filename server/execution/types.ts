@@ -7,6 +7,10 @@ export interface ExecuteArgs {
   maxSlippagePct?: number;
   reasons: string[];
   mode: string;
+  // Per-request token overrides — used by Base engine for arbitrary ERC20 pairs.
+  // If omitted, baseEngine falls back to BASE_PRIMARY_TOKEN / BASE_USDC env vars.
+  tokenIn?: string;
+  tokenOut?: string;
 }
 
 export interface ExecutionReceipt {
@@ -43,5 +47,8 @@ export interface TradeRequest {
   reasons: string[];
   mode: string;
   source: "ui" | "skill" | "acp";
-  wallet?: string; // reserved for phase 2 wallet-connect / ACP — ignored in phase 1
+  wallet?: string;
+  // Per-request token addresses — allows any ERC20 pair on Base without env var changes.
+  // ACP jobs set this per-request without mutating sharedState.activeTokens.
+  tokens?: { base: string; quote: string };
 }
