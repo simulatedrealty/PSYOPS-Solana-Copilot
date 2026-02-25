@@ -12,13 +12,14 @@ import {
   http,
   parseUnits,
   encodeFunctionData,
+  getAddress,
   type Address,
 } from "viem";
 import { base } from "viem/chains";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9" as const;
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9");
 
 const JUPITER_MINTS: Record<string, string> = {
   SOL: "So11111111111111111111111111111111111111112",
@@ -200,14 +201,16 @@ export async function buildBaseTransaction(
   walletAddress: string
 ): Promise<{ steps: TransactionStep[] }> {
   const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-  const primaryToken = process.env.BASE_PRIMARY_TOKEN as Address;
-  const usdcAddress = (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
-  const swapRouter = (process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
+  const rawPrimaryToken = process.env.BASE_PRIMARY_TOKEN;
   const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
 
-  if (!primaryToken) {
+  if (!rawPrimaryToken) {
     throw new Error("Base chain not configured. Required: BASE_PRIMARY_TOKEN");
   }
+
+  const primaryToken = getAddress(rawPrimaryToken) as Address;
+  const usdcAddress = getAddress(process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
+  const swapRouter = getAddress(process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
 
   const isBuy = side === "BUY";
   const tokenIn: Address = isBuy ? usdcAddress : primaryToken;
@@ -217,7 +220,7 @@ export async function buildBaseTransaction(
   const outLabel = isBuy ? baseSymbol : "USDC";
 
   const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
-  const userAddress = walletAddress as Address;
+  const userAddress = getAddress(walletAddress) as Address;
 
   const inDecimals = await publicClient.readContract({
     address: tokenIn, abi: ERC20_ABI, functionName: "decimals",

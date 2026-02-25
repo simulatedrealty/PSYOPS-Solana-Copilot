@@ -1,4 +1,4 @@
-import { createPublicClient, http, formatUnits, parseUnits, type Address } from "viem";
+import { createPublicClient, http, formatUnits, parseUnits, getAddress, type Address } from "viem";
 import { base as baseChain } from "viem/chains";
 import type { ActiveTokens } from "./state";
 
@@ -84,7 +84,7 @@ async function jupiterQuote(
 
 // ── Base ──────────────────────────────────────────────────────────────────────
 
-const QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9" as Address;
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9") as Address;
 
 const QUOTER_V2_ABI = [
   {
@@ -140,13 +140,13 @@ async function getBaseImpliedPrice(
     const publicClient = createPublicClient({ chain: baseChain, transport: http(rpcUrl) });
     const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
 
-    const quoteAddr = (tokens.quote || BASE_USDC_DEFAULT) as Address;
-    const baseAddr  = tokens.base as Address;
-
-    if (!baseAddr) {
+    if (!tokens.base) {
       console.warn("[market] No base token address provided for Base chain");
       return { impliedPrice: 0, slippageBps: 0, impact: 0, routeSummary: "no base token address" };
     }
+
+    const quoteAddr = getAddress(tokens.quote || BASE_USDC_DEFAULT) as Address;
+    const baseAddr  = getAddress(tokens.base) as Address;
 
     // Read on-chain decimals (handles WBTC/8, USDT/6, any non-18 token)
     const [quoteDecimals, baseDecimals] = await Promise.all([
