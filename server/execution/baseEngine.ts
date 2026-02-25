@@ -20,6 +20,7 @@ import {
   http,
   parseUnits,
   formatUnits,
+  getAddress,
   type Address,
 } from "viem";
 import { base } from "viem/chains";
@@ -30,7 +31,7 @@ import { type ExecutionEngine, type ExecuteArgs, type ExecutionReceipt } from ".
 let lastTradeTs = 0;
 
 // QuoterV2 — same address on Base mainnet
-const QUOTER_V2 = "0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9" as const;
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9");
 
 // ── ABIs ──────────────────────────────────────────────────────────────────────
 const ERC20_ABI = [
@@ -182,7 +183,7 @@ export const baseEngine: ExecutionEngine = {
     // ── Strict env config (no silent fallbacks) ───────────────────────────────
     const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
     const pk = requireEnv("BASE_PRIVATE_KEY");
-    const swapRouter = (process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
+    const swapRouter = getAddress(process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
     const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
     const explorerPrefix =
       process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
@@ -195,11 +196,11 @@ export const baseEngine: ExecutionEngine = {
     let tokenIn: Address;
     let tokenOut: Address;
     if (args.tokenIn && args.tokenOut) {
-      tokenIn  = args.tokenIn  as Address;
-      tokenOut = args.tokenOut as Address;
+      tokenIn  = getAddress(args.tokenIn) as Address;
+      tokenOut = getAddress(args.tokenOut) as Address;
     } else {
-      const primaryToken = requireEnv("BASE_PRIMARY_TOKEN") as Address;
-      const usdcAddress  = (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
+      const primaryToken = getAddress(requireEnv("BASE_PRIMARY_TOKEN")) as Address;
+      const usdcAddress  = getAddress(process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") as Address;
       tokenIn  = isBuy ? usdcAddress  : primaryToken;
       tokenOut = isBuy ? primaryToken : usdcAddress;
     }

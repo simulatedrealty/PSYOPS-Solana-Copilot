@@ -14,7 +14,7 @@ import { listReceipts, appendReceipt } from "./receipts/store";
 import { handleTrade } from "./execution/handler";
 import { getEngine } from "./execution/getEngine";
 import { buildSolanaTransaction, buildBaseTransaction } from "./execution/buildTransaction";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, getAddress } from "viem";
 import { base } from "viem/chains";
 
 export async function registerRoutes(
@@ -115,10 +115,13 @@ export async function registerRoutes(
       };
       sharedState.activePair = pair || "SOL-USDC";
     } else {
-      // Base — caller provides explicit ERC20 addresses for any token, or fall back to env vars
+      // Base — caller provides explicit ERC20 addresses for any token, or fall back to env vars.
+      // Normalize with getAddress() so any casing is accepted (EIP-55 checksum).
+      const rawBase  = baseToken  || process.env.BASE_PRIMARY_TOKEN || "";
+      const rawQuote = quoteToken || process.env.BASE_USDC          || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
       sharedState.activeTokens = {
-        base:  baseToken  || process.env.BASE_PRIMARY_TOKEN || "",
-        quote: quoteToken || process.env.BASE_USDC          || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        base:  rawBase  ? getAddress(rawBase)  : "",
+        quote: getAddress(rawQuote),
       };
       sharedState.activePair = pair || "BASE-USDC";
     }
@@ -218,7 +221,7 @@ export async function registerRoutes(
 
   app.post("/api/ui/confirm-transaction", async (req, res) => {
     try {
-      const { chain, txHash, walletAddress, pair, side, notional } = req.body;
+      let { chain, txHash, walletAddress, pair, side, notional } = req.body;
       if (!chain || !txHash || !walletAddress || !pair || !side || !notional) {
         return res.status(400).json({ error: "Missing required fields: chain, txHash, walletAddress, pair, side, notional" });
       }
@@ -237,6 +240,8 @@ export async function registerRoutes(
           return res.status(400).json({ error: "Transaction failed on-chain", details: tx.meta.err });
         }
       } else if (chain === "base") {
+        // Normalize EVM address at the boundary before any viem usage
+        walletAddress = getAddress(walletAddress);
         const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
         const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
         const txReceipt = await publicClient.getTransactionReceipt({ hash: txHash as `0x${string}` });
