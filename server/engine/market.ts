@@ -84,7 +84,7 @@ async function jupiterQuote(
 
 // ── Base ──────────────────────────────────────────────────────────────────────
 
-const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B136cf394426C39B0FE9") as Address;
+const QUOTER_V2 = getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e") as Address;
 
 const QUOTER_V2_ABI = [
   {
