@@ -31,7 +31,8 @@ import { type ExecutionEngine, type ExecuteArgs, type ExecutionReceipt } from ".
 let lastTradeTs = 0;
 
 // QuoterV2 — same address on Base mainnet
-const QUOTER_V2 = getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e");
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a");
+const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 // ── ABIs ──────────────────────────────────────────────────────────────────────
 const ERC20_ABI = [
@@ -184,7 +185,9 @@ export const baseEngine: ExecutionEngine = {
     const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
     const pk = requireEnv("BASE_PRIVATE_KEY");
     const swapRouter = getAddress(process.env.BASE_SWAP_ROUTER || "0x2626664c2603336E57B271c5C0b26F421741e481") as Address;
-    const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
+    const feeTiers: readonly number[] = process.env.BASE_POOL_FEE
+      ? [parseInt(process.env.BASE_POOL_FEE, 10)]
+      : FEE_TIERS;
     const explorerPrefix =
       process.env.BASE_EXPLORER_TX_PREFIX || "https://basescan.org/tx/";
 
@@ -231,9 +234,11 @@ export const baseEngine: ExecutionEngine = {
         functionName: "decimals",
       });
 
-      // ── Compute inAmountRaw ───────────────────────────────────────────────
+      // ── Compute inAmountRaw + best fee tier ─────────────────────────────
       let inAmountRaw: bigint;
       let inAmountHuman: number;
+      let bestFee: number;
+      let quotedOut = BigInt(0);
 
       if (isBuy) {
         inAmountRaw = parseUnits(
@@ -241,61 +246,88 @@ export const baseEngine: ExecutionEngine = {
           Number(inDecimals)
         );
         inAmountHuman = notionalUsd;
+
+        // Try all fee tiers in parallel, pick highest output
+        const buyQuotes = await Promise.allSettled(
+          feeTiers.map(fee =>
+            publicClient.simulateContract({
+              address: QUOTER_V2,
+              abi: QUOTER_V2_ABI,
+              functionName: "quoteExactInputSingle",
+              args: [{
+                tokenIn,
+                tokenOut,
+                amountIn: inAmountRaw,
+                fee,
+                sqrtPriceLimitX96: BigInt(0),
+              }],
+            }).then(({ result }) => ({ fee, amountOut: result[0] as bigint }))
+          )
+        );
+        const successfulBuyQuotes = buyQuotes
+          .filter((r): r is PromiseFulfilledResult<{ fee: number; amountOut: bigint }> => r.status === "fulfilled")
+          .map(r => r.value)
+          .filter(q => q.amountOut > BigInt(0));
+        if (successfulBuyQuotes.length === 0) {
+          throw new Error("No pool found at any fee tier for this pair");
+        }
+        const bestBuy = successfulBuyQuotes.reduce((a, b) => a.amountOut > b.amountOut ? a : b);
+        bestFee = bestBuy.fee;
+        quotedOut = bestBuy.amountOut;
       } else {
         // SELL: QuoterV2 quoteExactOutputSingle → correct token amount to sell
-        // fixes baseMainnetEngine bug of using notionalUsd directly as token units
         const usdcAmountRaw = parseUnits(
           notionalUsd.toFixed(Number(outDecimals)),
           Number(outDecimals)
         );
-        let estimatedIn = BigInt(0);
-        try {
-          // tokenIn = base token (spending), tokenOut = quote/USDC (receiving)
-          // This is already correct since tokenIn/tokenOut are swap-direction-aware.
-          const { result } = await publicClient.simulateContract({
-            address: QUOTER_V2,
-            abi: QUOTER_V2_ABI,
-            functionName: "quoteExactOutputSingle",
-            args: [
-              {
+
+        // Try all fee tiers in parallel, pick lowest input (best for seller)
+        const sellQuotes = await Promise.allSettled(
+          feeTiers.map(fee =>
+            publicClient.simulateContract({
+              address: QUOTER_V2,
+              abi: QUOTER_V2_ABI,
+              functionName: "quoteExactOutputSingle",
+              args: [{
                 tokenIn,
                 tokenOut,
                 amount: usdcAmountRaw,
-                fee: poolFee,
+                fee,
                 sqrtPriceLimitX96: BigInt(0),
-              },
-            ],
-          });
-          estimatedIn = result[0] as bigint;
-        } catch {
-          throw new Error(
-            "Could not quote SELL amount from QuoterV2 — check pool liquidity"
-          );
+              }],
+            }).then(({ result }) => ({ fee, amountIn: result[0] as bigint }))
+          )
+        );
+        const successfulSellQuotes = sellQuotes
+          .filter((r): r is PromiseFulfilledResult<{ fee: number; amountIn: bigint }> => r.status === "fulfilled")
+          .map(r => r.value)
+          .filter(q => q.amountIn > BigInt(0));
+        if (successfulSellQuotes.length === 0) {
+          throw new Error("Could not quote SELL amount at any fee tier — check pool liquidity");
         }
-        inAmountRaw = estimatedIn;
-        inAmountHuman = parseFloat(formatUnits(estimatedIn, Number(inDecimals)));
-      }
+        const bestSell = successfulSellQuotes.reduce((a, b) => a.amountIn < b.amountIn ? a : b);
+        bestFee = bestSell.fee;
+        inAmountRaw = bestSell.amountIn;
+        inAmountHuman = parseFloat(formatUnits(bestSell.amountIn, Number(inDecimals)));
 
-      // ── QuoterV2 quoteExactInputSingle → real amountOutMinimum ────────────
-      let quotedOut = BigInt(0);
-      try {
-        const { result } = await publicClient.simulateContract({
-          address: QUOTER_V2,
-          abi: QUOTER_V2_ABI,
-          functionName: "quoteExactInputSingle",
-          args: [
-            {
+        // Get expected output for slippage floor using the winning fee tier
+        try {
+          const { result } = await publicClient.simulateContract({
+            address: QUOTER_V2,
+            abi: QUOTER_V2_ABI,
+            functionName: "quoteExactInputSingle",
+            args: [{
               tokenIn,
               tokenOut,
               amountIn: inAmountRaw,
-              fee: poolFee,
+              fee: bestFee,
               sqrtPriceLimitX96: BigInt(0),
-            },
-          ],
-        });
-        quotedOut = result[0] as bigint;
-      } catch {
-        // proceed with amountOutMinimum = 0 if quote fails
+            }],
+          });
+          quotedOut = result[0] as bigint;
+        } catch {
+          // proceed with amountOutMinimum = 0 if quote fails
+        }
       }
 
       const slippageFactor = 1 - maxSlippagePct / 100;
@@ -331,7 +363,7 @@ export const baseEngine: ExecutionEngine = {
           {
             tokenIn,
             tokenOut,
-            fee: poolFee,
+            fee: bestFee,
             recipient: account.address,
             deadline,
             amountIn: inAmountRaw,

@@ -19,7 +19,8 @@ import { base } from "viem/chains";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const QUOTER_V2 = getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e");
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a");
+const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 const JUPITER_MINTS: Record<string, string> = {
   SOL: "So11111111111111111111111111111111111111112",
@@ -202,7 +203,9 @@ export async function buildBaseTransaction(
 ): Promise<{ steps: TransactionStep[] }> {
   const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
   const rawPrimaryToken = process.env.BASE_PRIMARY_TOKEN;
-  const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
+  const feeTiers: readonly number[] = process.env.BASE_POOL_FEE
+    ? [parseInt(process.env.BASE_POOL_FEE, 10)]
+    : FEE_TIERS;
 
   if (!rawPrimaryToken) {
     throw new Error("Base chain not configured. Required: BASE_PRIMARY_TOKEN");
@@ -229,52 +232,91 @@ export async function buildBaseTransaction(
     address: tokenOut, abi: ERC20_ABI, functionName: "decimals",
   });
 
-  // Compute input amount
+  // Compute input amount + best fee tier
   let inAmountRaw: bigint;
+  let bestFee: number;
+  let quotedOut = BigInt(0);
+
   if (isBuy) {
     inAmountRaw = parseUnits(notional.toFixed(Number(inDecimals)), Number(inDecimals));
+
+    // Try all fee tiers in parallel, pick highest output
+    const buyQuotes = await Promise.allSettled(
+      feeTiers.map(fee =>
+        publicClient.simulateContract({
+          address: QUOTER_V2,
+          abi: QUOTER_V2_ABI,
+          functionName: "quoteExactInputSingle",
+          args: [{
+            tokenIn,
+            tokenOut,
+            amountIn: inAmountRaw,
+            fee,
+            sqrtPriceLimitX96: BigInt(0),
+          }],
+        }).then(({ result }) => ({ fee, amountOut: result[0] as bigint }))
+      )
+    );
+    const successfulBuyQuotes = buyQuotes
+      .filter((r): r is PromiseFulfilledResult<{ fee: number; amountOut: bigint }> => r.status === "fulfilled")
+      .map(r => r.value)
+      .filter(q => q.amountOut > BigInt(0));
+    if (successfulBuyQuotes.length === 0) {
+      throw new Error("No pool found at any fee tier for this pair");
+    }
+    const bestBuy = successfulBuyQuotes.reduce((a, b) => a.amountOut > b.amountOut ? a : b);
+    bestFee = bestBuy.fee;
+    quotedOut = bestBuy.amountOut;
   } else {
     // SELL: QuoterV2 quoteExactOutputSingle → correct token amount to sell for target USDC
     const usdcAmountRaw = parseUnits(notional.toFixed(Number(outDecimals)), Number(outDecimals));
-    let estimatedIn = BigInt(0);
+
+    // Try all fee tiers in parallel, pick lowest input (best for seller)
+    const sellQuotes = await Promise.allSettled(
+      feeTiers.map(fee =>
+        publicClient.simulateContract({
+          address: QUOTER_V2,
+          abi: QUOTER_V2_ABI,
+          functionName: "quoteExactOutputSingle",
+          args: [{
+            tokenIn: primaryToken,
+            tokenOut: usdcAddress,
+            amount: usdcAmountRaw,
+            fee,
+            sqrtPriceLimitX96: BigInt(0),
+          }],
+        }).then(({ result }) => ({ fee, amountIn: result[0] as bigint }))
+      )
+    );
+    const successfulSellQuotes = sellQuotes
+      .filter((r): r is PromiseFulfilledResult<{ fee: number; amountIn: bigint }> => r.status === "fulfilled")
+      .map(r => r.value)
+      .filter(q => q.amountIn > BigInt(0));
+    if (successfulSellQuotes.length === 0) {
+      throw new Error("Could not quote SELL amount at any fee tier — check pool liquidity");
+    }
+    const bestSell = successfulSellQuotes.reduce((a, b) => a.amountIn < b.amountIn ? a : b);
+    bestFee = bestSell.fee;
+    inAmountRaw = bestSell.amountIn;
+
+    // Get expected output for slippage floor using the winning fee tier
     try {
       const { result } = await publicClient.simulateContract({
         address: QUOTER_V2,
         abi: QUOTER_V2_ABI,
-        functionName: "quoteExactOutputSingle",
+        functionName: "quoteExactInputSingle",
         args: [{
-          tokenIn: primaryToken,
-          tokenOut: usdcAddress,
-          amount: usdcAmountRaw,
-          fee: poolFee,
+          tokenIn,
+          tokenOut,
+          amountIn: inAmountRaw,
+          fee: bestFee,
           sqrtPriceLimitX96: BigInt(0),
         }],
       });
-      estimatedIn = result[0] as bigint;
+      quotedOut = result[0] as bigint;
     } catch {
-      throw new Error("Could not quote SELL amount from QuoterV2 — check pool liquidity");
+      // proceed with amountOutMinimum = 0 if quote fails
     }
-    inAmountRaw = estimatedIn;
-  }
-
-  // QuoterV2 quoteExactInputSingle → real amountOutMinimum
-  let quotedOut = BigInt(0);
-  try {
-    const { result } = await publicClient.simulateContract({
-      address: QUOTER_V2,
-      abi: QUOTER_V2_ABI,
-      functionName: "quoteExactInputSingle",
-      args: [{
-        tokenIn,
-        tokenOut,
-        amountIn: inAmountRaw,
-        fee: poolFee,
-        sqrtPriceLimitX96: BigInt(0),
-      }],
-    });
-    quotedOut = result[0] as bigint;
-  } catch {
-    // proceed with amountOutMinimum = 0 if quote fails
   }
 
   const maxSlippagePct = 0.5;
@@ -314,7 +356,7 @@ export async function buildBaseTransaction(
       args: [{
         tokenIn,
         tokenOut,
-        fee: poolFee,
+        fee: bestFee,
         recipient: userAddress,
         deadline,
         amountIn: inAmountRaw,
