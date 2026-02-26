@@ -19,7 +19,7 @@ import { base } from "viem/chains";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const QUOTER_V2 = getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e");
+const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a");
 
 const JUPITER_MINTS: Record<string, string> = {
   SOL: "So11111111111111111111111111111111111111112",
