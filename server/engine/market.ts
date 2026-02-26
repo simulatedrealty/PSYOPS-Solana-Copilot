@@ -85,6 +85,7 @@ async function jupiterQuote(
 // ── Base ──────────────────────────────────────────────────────────────────────
 
 const QUOTER_V2 = getAddress("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a") as Address;
+const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 const QUOTER_V2_ABI = [
   {
@@ -138,7 +139,6 @@ async function getBaseImpliedPrice(
 
   try {
     const publicClient = createPublicClient({ chain: baseChain, transport: http(rpcUrl) });
-    const poolFee = parseInt(process.env.BASE_POOL_FEE || "3000", 10);
 
     if (!tokens.base) {
       console.warn("[market] No base token address provided for Base chain");
@@ -159,21 +159,36 @@ async function getBaseImpliedPrice(
       Number(quoteDecimals)
     );
 
-    // Simulate quote → base swap
-    const { result } = await publicClient.simulateContract({
-      address: QUOTER_V2,
-      abi: QUOTER_V2_ABI,
-      functionName: "quoteExactInputSingle",
-      args: [{
-        tokenIn:           quoteAddr,
-        tokenOut:          baseAddr,
-        amountIn:          inAmountRaw,
-        fee:               poolFee,
-        sqrtPriceLimitX96: BigInt(0),
-      }],
-    });
+    // Try all fee tiers in parallel, pick the best quote
+    const quoteResults = await Promise.allSettled(
+      FEE_TIERS.map(fee =>
+        publicClient.simulateContract({
+          address: QUOTER_V2,
+          abi: QUOTER_V2_ABI,
+          functionName: "quoteExactInputSingle",
+          args: [{
+            tokenIn:           quoteAddr,
+            tokenOut:          baseAddr,
+            amountIn:          inAmountRaw,
+            fee,
+            sqrtPriceLimitX96: BigInt(0),
+          }],
+        }).then(({ result }) => ({ fee, amountOut: result[0] as bigint }))
+      )
+    );
 
-    const outAmountRaw: bigint = result[0] as bigint;
+    const successfulQuotes = quoteResults
+      .filter((r): r is PromiseFulfilledResult<{ fee: number; amountOut: bigint }> => r.status === "fulfilled")
+      .map(r => r.value)
+      .filter(q => q.amountOut > BigInt(0));
+
+    if (successfulQuotes.length === 0) {
+      console.warn("[market] No Base pool found at any fee tier for this pair");
+      return { impliedPrice: 0, slippageBps: 0, impact: 0, routeSummary: "no pool found" };
+    }
+
+    const best = successfulQuotes.reduce((a, b) => a.amountOut > b.amountOut ? a : b);
+    const outAmountRaw = best.amountOut;
     const outAmountHuman = parseFloat(formatUnits(outAmountRaw, Number(baseDecimals)));
 
     if (outAmountHuman <= 0) {
@@ -186,7 +201,7 @@ async function getBaseImpliedPrice(
       impliedPrice,
       slippageBps: 50, // conservative fixed estimate; execution enforces real on-chain limit
       impact: 0,
-      routeSummary: `uniswap-v3 fee=${poolFee}`,
+      routeSummary: `uniswap-v3 fee=${best.fee} (best of ${successfulQuotes.length} tiers)`,
     };
   } catch (err: any) {
     console.error("[market] Base QuoterV2 error:", err.message);
