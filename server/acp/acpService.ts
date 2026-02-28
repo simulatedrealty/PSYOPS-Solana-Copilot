@@ -1,20 +1,21 @@
-import {
+import AcpClientImport, {
   AcpContractClientV2,
   AcpJob,
   AcpJobPhases,
   AcpMemo,
 } from "@virtuals-protocol/acp-node";
-import { createRequire } from "module";
 import { invoke } from "../skills/tradingSkill";
 
-const require = createRequire(import.meta.url);
-const AcpClient = require("@virtuals-protocol/acp-node").default;
+const AcpClient =
+  typeof AcpClientImport === "function"
+    ? AcpClientImport
+    : (AcpClientImport as any).default;
 
 const ACP_ENTITY_ID = parseInt(process.env.ACP_ENTITY_ID || "0", 10);
 const ACP_AGENT_WALLET = process.env.ACP_AGENT_WALLET_ADDRESS || "";
 const ACP_PRIVATE_KEY = process.env.ACP_PRIVATE_KEY || "";
 
-let acpClient: InstanceType<typeof AcpClient> | null = null;
+let acpClient: any = null;
 
 export async function initAcp(): Promise<void> {
   if (!ACP_ENTITY_ID || !ACP_AGENT_WALLET || !ACP_PRIVATE_KEY) {
@@ -124,6 +125,6 @@ function resolveAction(args: Record<string, any>): string {
   return "get_market"; // safe default
 }
 
-export function getAcpClient(): InstanceType<typeof AcpClient> | null {
+export function getAcpClient(): any {
   return acpClient;
 }
