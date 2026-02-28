@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { initAcp } from "./acp/acpService";
 
 const app = express();
 const httpServer = createServer(app);
@@ -98,6 +99,9 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      initAcp().catch((err) =>
+        console.error("[acp] Init failed:", err.message),
+      );
     },
   );
 })();

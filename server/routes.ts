@@ -16,6 +16,7 @@ import { getEngine } from "./execution/getEngine";
 import { buildSolanaTransaction, buildBaseTransaction } from "./execution/buildTransaction";
 import { createPublicClient, http, getAddress } from "viem";
 import { base } from "viem/chains";
+import { getAcpClient } from "./acp/acpService";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -67,6 +68,9 @@ export async function registerRoutes(
       lastExplorerUrl: sharedState.lastExplorerUrl,
       totalTrades: receipts.length,
       receipts,
+      acpEnabled: !!(process.env.ACP_ENTITY_ID && process.env.ACP_AGENT_WALLET_ADDRESS && process.env.ACP_PRIVATE_KEY),
+      acpEntityId: process.env.ACP_ENTITY_ID || null,
+      acpWallet: process.env.ACP_AGENT_WALLET_ADDRESS || null,
     });
   });
 
@@ -285,6 +289,32 @@ export async function registerRoutes(
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ── ACP job query endpoints ──────────────────────────────────────────────────
+
+  app.get("/api/acp/jobs/active", async (_req, res) => {
+    const client = getAcpClient();
+    if (!client) return res.status(503).json({ error: "ACP not configured" });
+    try {
+      const jobs = await client.getActiveJobs(1, 20);
+      res.json(jobs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/acp/jobs/completed", async (_req, res) => {
+    const client = getAcpClient();
+    if (!client) return res.status(503).json({ error: "ACP not configured" });
+    try {
+      const jobs = await client.getCompletedJobs(1, 20);
+      res.json(jobs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Skill API ───────────────────────────────────────────────────────────────
 
   app.get(["/skill.md", "/api/skill.md"], (req, res) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
