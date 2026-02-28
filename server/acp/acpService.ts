@@ -1,21 +1,20 @@
-import AcpClientDefault, {
+import {
   AcpContractClientV2,
   AcpJob,
   AcpJobPhases,
   AcpMemo,
 } from "@virtuals-protocol/acp-node";
-import * as AcpModule from "@virtuals-protocol/acp-node";
+import { createRequire } from "module";
 import { invoke } from "../skills/tradingSkill";
 
-const AcpClient = (AcpClientDefault as any)?.prototype?.constructor === AcpClientDefault
-  ? AcpClientDefault
-  : (AcpModule as any).default || AcpClientDefault;
+const require = createRequire(import.meta.url);
+const AcpClient = require("@virtuals-protocol/acp-node").default;
 
 const ACP_ENTITY_ID = parseInt(process.env.ACP_ENTITY_ID || "0", 10);
 const ACP_AGENT_WALLET = process.env.ACP_AGENT_WALLET_ADDRESS || "";
 const ACP_PRIVATE_KEY = process.env.ACP_PRIVATE_KEY || "";
 
-let acpClient: AcpClientDefault | null = null;
+let acpClient: InstanceType<typeof AcpClient> | null = null;
 
 export async function initAcp(): Promise<void> {
   if (!ACP_ENTITY_ID || !ACP_AGENT_WALLET || !ACP_PRIVATE_KEY) {
@@ -36,9 +35,9 @@ export async function initAcp(): Promise<void> {
         console.error(`[acp] Unhandled error in job ${job.id}:`, err.message),
       );
     },
-  }) as AcpClientDefault;
+  });
 
-  await acpClient!.init();
+  await acpClient.init();
   console.log(
     `[acp] ACP seller agent initialized (entity=${ACP_ENTITY_ID}, wallet=${ACP_AGENT_WALLET})`,
   );
@@ -125,6 +124,6 @@ function resolveAction(args: Record<string, any>): string {
   return "get_market"; // safe default
 }
 
-export function getAcpClient(): AcpClientDefault | null {
+export function getAcpClient(): InstanceType<typeof AcpClient> | null {
   return acpClient;
 }
